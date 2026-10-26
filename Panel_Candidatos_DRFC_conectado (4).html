@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DRFC · Panel de Candidatos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+/* ===================== CONFIGURACIÓN ===================== */
+/* Ajusta estos 4 valores antes de usar el panel. */
+</style>
+<script>
+const CONFIG = {
+  SUPABASE_URL: "https://zkcdsfaioiuyahiithfk.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_E1sEUftEQFy1fACvDAHx_Q_DwceKq_T",
+  // Contraseña simple de acceso al panel. Cámbiala antes de compartir el link.
+  // true = pide la contraseña al abrir el panel; false = abre directo, sin login.
+  // Cada cuántos segundos revisa si llegaron candidatos nuevos (mientras el panel está abierto).
+  ACTUALIZAR_CADA_SEGUNDOS: 30,
+  PEDIR_CONTRASENA: false,
+  PASSWORD: "drfc2026",
+  // URL del webhook de n8n que crea el evento en Calendar al confirmar una entrevista.
+  // Debe ser un nodo "Webhook" (no "Form Trigger") que reciba JSON: { folio, fecha, hora }
+  // y esté conectado al mismo Code (conversión de fecha) + Google Calendar que ya tienes.
+  WEBHOOK_AGENDAR_URL: "https://n8n-nqfa.srv1936279.hstgr.cloud/webhook/agendar-entrevista-panel",
+  // Clave secreta: debe ser la misma que está en el nodo "Validar y preparar" del flujo de n8n.
+  WEBHOOK_CLAVE: "2464618cc07797b0f5f2102d"
+};
+</script>
+<style>
+:root {
+  --color-bg: #f2f2f3;
+  --color-surface: #e9e9ea;
+  --color-text: #1d1f20;
+  --color-accent: #5980a6;
+  --color-accent-700: #416180;
+  --color-accent-600: #597ea3;
+  --color-accent-100: #eef6ff;
+  --color-accent-800: #2c455d;
+  --color-accent-900: #1d2d3d;
+  --color-neutral-100: #f5f5f8;
+  --color-neutral-200: #e7e7ea;
+  --color-neutral-700: #5d5d60;
+  --color-divider: color-mix(in srgb, #1d1f20 16%, transparent);
+  --font-heading: "Barlow Condensed", system-ui, sans-serif;
+  --font-body: "Barlow", system-ui, sans-serif;
+  --space-1: 3.4px; --space-2: 6.8px; --space-3: 10.2px; --space-4: 13.6px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+h1, h2, h3 { font-family: var(--font-heading); font-weight: 600; line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 6px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; text-decoration: none;
+  font-family: var(--font-heading); font-weight: 600; font-size: 14px; color: var(--color-text);
+  background: transparent; border: 1px solid var(--color-divider); padding: 8px 13px; white-space: nowrap; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+.btn-primary:hover:not(:disabled) { background: var(--color-accent-600); }
+.btn-secondary:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.btn-ghost { border-color: transparent; color: var(--color-accent); padding-inline: 4px; }
+.input { width: 100%; min-height: 36px; padding: 6px 10px; font: inherit; font-size: 14px; background: var(--color-surface);
+  border: 1px solid var(--color-divider); color: var(--color-text); }
+.corner { position: absolute; width: 8px; height: 8px; border-color: var(--color-accent); border-style: solid; }
+.blueprint { position: relative; border: 1px solid var(--color-divider); }
+.blueprint .tl { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+.blueprint .tr { top: -1px; right: -1px; border-width: 1px 1px 0 0; }
+.blueprint .bl { bottom: -1px; left: -1px; border-width: 0 0 1px 1px; }
+.blueprint .br { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+.table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.table th { text-align: left; font-family: var(--font-heading); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; padding: 11px 10px; border-bottom: 1px solid var(--color-divider); }
+.table td { padding: 12px 10px; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent); }
+.cand-row { cursor: pointer; }
+.cand-row:hover { background: var(--color-accent-100); }
+.seg-opt { font-family: var(--font-heading); font-size: 13.5px; letter-spacing: .04em; padding: 7px 13px; border: 0; border-right: 1px solid var(--color-divider); cursor: pointer; background: transparent; }
+.slot { font-family: var(--font-heading); font-size: 15px; padding: 11px 6px; border: 1px solid var(--color-divider); background: transparent; cursor: pointer; }
+.slot:hover { border-color: var(--color-accent); }
+.dialog-backdrop { position: fixed; inset: 0; background: color-mix(in srgb, #1d1f20 55%, transparent); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 20; }
+.muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+#gate { position: fixed; inset: 0; background: var(--color-bg); display: flex; align-items: center; justify-content: center; z-index: 50; }
+#app { display: none; }
+.campana { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid var(--color-divider); background: transparent; cursor: pointer; color: var(--color-text); }
+.campana:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
+.campana .badge { position: absolute; top: -7px; right: -7px; min-width: 18px; height: 18px; padding: 0 5px; background: #a33a2e; color: #fff; font-family: var(--font-heading); font-size: 12px; line-height: 18px; text-align: center; border-radius: 9px; }
+.panel-aviso { position: absolute; top: 46px; right: 0; width: min(440px, 92vw); background: var(--color-bg); border: 1px solid var(--color-divider); box-shadow: 0 8px 24px rgba(0,0,0,.14); z-index: 30; }
+.aviso-item { display: block; width: 100%; text-align: left; padding: 11px 14px; background: transparent; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent); cursor: pointer; font: inherit; color: inherit; }
+.aviso-item:hover { background: var(--color-accent-100); }
+.toast { position: fixed; right: 22px; bottom: 22px; max-width: 340px; background: var(--color-accent-900); color: #fff; padding: 12px 16px; font-size: 14px; z-index: 40; box-shadow: 0 8px 24px rgba(0,0,0,.2); cursor: pointer; }
+.tag-nuevo { margin-left: 6px; padding: 1px 6px; font-family: var(--font-heading); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; background: var(--color-accent); color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- ===================== PANTALLA DE CONTRASEÑA ===================== -->
+<div id="gate">
+  <div class="blueprint" style="width:min(360px,90vw);padding:28px;background:var(--color-bg)">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div style="font-family:var(--font-heading);font-weight:700;font-size:20px;margin-bottom:2px">DRFC</div>
+    <div class="muted" style="font-size:13px;margin-bottom:18px">Panel de Candidatos — acceso restringido</div>
+    <input id="gate-input" class="input" type="password" placeholder="Contraseña" style="margin-bottom:12px">
+    <button id="gate-btn" class="btn btn-primary" style="width:100%">Entrar</button>
+    <div id="gate-error" class="muted" style="font-size:12.5px;margin-top:10px;color:#a33a2e;display:none">Contraseña incorrecta.</div>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 28px;border-bottom:1px solid var(--color-divider);position:sticky;top:0;background:var(--color-bg);z-index:5">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <span style="font-family:var(--font-heading);font-weight:700;font-size:20px">DRFC</span>
+      <span style="font-family:var(--font-heading);font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-700)">Reclutamiento IA</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:18px">
+      <div id="header-status" class="muted" style="font-size:12.5px">Cargando…</div>
+      <div style="position:relative">
+        <button id="btn-campana" class="campana" aria-label="Candidatos nuevos" title="Candidatos nuevos">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          <span id="campana-badge" class="badge" style="display:none">0</span>
+        </button>
+        <div id="panel-aviso" class="panel-aviso" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+  <div id="view-root" style="padding:28px;max-width:1320px"></div>
+</div>
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+/* ===================== ESTADO ===================== */
+const state = {
+  vista: "vacantes",
+  seleccion: null,
+  busqueda: "",
+  vacante: "todas",
+  rec: "todas",
+  ordenPor: "score",
+  ordenDesc: true,
+  pagina: 1,
+  porPagina: 25,
+  fechaPreset: "todo",
+  desde: "",
+  hasta: "",
+  vistos: null,
+  resultadoAgenda: null,
+  agendadasLocal: {},
+  conocidos: null,
+  campanaAbierta: false,
+  refrescando: false,
+  ultimaActualizacion: null,
+  timer: null,
+  agenda: null,
+  fecha: hoyLocal(),
+  hora: "",
+  confirmando: false,
+  vacantes: [],
+  evaluaciones: [],
+  loading: true,
+  error: null
+};
+
+const REC = {
+  avanzar:   { texto: "Avanzar",             color: "#2f6b46", bg: "#e4efe7", ink: "#20492f" },
+  revisar:   { texto: "Revisar manualmente", color: "#b5891a", bg: "#f6efdc", ink: "#6d5210" },
+  descartar: { texto: "Descartar",           color: "#a33a2e", bg: "#f4e3e0", ink: "#7a2b21" }
+};
+function recKey(recomendacion) {
+  const r = (recomendacion || "").toLowerCase();
+  if (r.includes("avanzar")) return "avanzar";
+  if (r.includes("descartar")) return "descartar";
+  return "revisar";
+}
+
+const HORAS = ["11:00 AM", "11:30 AM", "12:00 PM", "12:30 PM", "1:00 PM"];
+const FILTROS = [
+  { key: "todas", label: "Todas" },
+  { key: "avanzar", label: "Avanzar" },
+  { key: "revisar", label: "Revisar" },
+  { key: "descartar", label: "Descartar" }
+];
+
+/* ===================== SUPABASE ===================== */
+const supa = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+
+/* ===================== FECHAS Y AVISOS ===================== */
+// La base guarda creado_en en hora UTC sin zona; se interpreta como UTC y se muestra en la hora del navegador.
+function leerFecha(s) {
+  if (!s) return null;
+  let t = String(s).replace(" ", "T");
+  if (!/[zZ]|[+-]\d\d(:?\d\d)?$/.test(t)) t += "Z";
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d;
+}
+const CLAVE_VISTOS = "drfc_candidatos_vistos";
+function leerVistos() { try { const v = JSON.parse(localStorage.getItem(CLAVE_VISTOS)); return Array.isArray(v) ? new Set(v) : null; } catch (e) { return null; } }
+function guardarVistos() { try { localStorage.setItem(CLAVE_VISTOS, JSON.stringify([...state.vistos])); } catch (e) {} }
+function marcarVisto(folio) {
+  if (state.vistos && !state.vistos.has(folio)) { state.vistos.add(folio); guardarVistos(); actualizarCampana(); }
+}
+function nuevosCandidatos() {
+  return state.evaluaciones.filter(c => !state.vistos.has(c.folio)).sort((a, b) => b.ts - a.ts);
+}
+function hace(ts) {
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (m < 1) return "ahora mismo";
+  if (m < 60) return `hace ${m} min`;
+  const hrs = Math.round(m / 60);
+  if (hrs < 24) return `hace ${hrs} h`;
+  const dias = Math.round(hrs / 24);
+  return dias === 1 ? "ayer" : `hace ${dias} días`;
+}
+function actualizarEncabezado() {
+  const hora = state.ultimaActualizacion ? state.ultimaActualizacion.toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit", hour12: true }) : "";
+  document.getElementById("header-status").textContent = state.loading
+    ? "Cargando…"
+    : state.error
+      ? "Error: " + state.error
+      : `Sincronizado · ${state.evaluaciones.length} candidatos${hora ? " · actualizado " + hora : ""}`;
+}
+function actualizarCampana() {
+  if (!state.vistos) return;
+  const n = nuevosCandidatos().length;
+  const badge = document.getElementById("campana-badge");
+  badge.style.display = n ? "block" : "none";
+  badge.textContent = n > 99 ? "99+" : String(n);
+  document.title = (n ? `(${n}) ` : "") + "DRFC · Panel de Candidatos";
+  if (state.campanaAbierta) pintarPanelAviso();
+}
+function pintarPanelAviso() {
+  const lista = nuevosCandidatos();
+  const cont = document.getElementById("panel-aviso");
+  const item = (c) => `<button class="aviso-item" data-folio="${c.folio}">
+      <div style="display:flex;justify-content:space-between;gap:10px"><strong>${esc(c.nombre)}</strong><span class="muted" style="font-size:12px;white-space:nowrap">${hace(c.ts)}</span></div>
+      <div class="muted" style="font-size:13px">${esc(c.vacante)}${c.sinCv ? " · Sin CV" : ""}</div>
+      <div style="font-size:13px;margin-top:2px">Score ${c.score} · ${REC[c.rec].texto}</div></button>`;
+  cont.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--color-divider)">
+      <strong style="font-family:var(--font-heading);font-size:16px;white-space:nowrap">Candidatos nuevos</strong>
+      ${lista.length ? `<button class="btn btn-ghost" id="btn-marcar-vistos" style="font-size:13px">Marcar todos como vistos</button>` : ""}</div>
+    ${lista.length
+      ? lista.slice(0, 8).map(item).join("") + (lista.length > 8 ? `<div class="muted" style="padding:10px 14px;font-size:12.5px">y ${lista.length - 8} más…</div>` : "")
+      : `<div class="muted" style="padding:16px 14px;font-size:13.5px">No hay candidatos nuevos.</div>`}`;
+  cont.querySelectorAll(".aviso-item").forEach(el => el.onclick = () => { cerrarCampana(); abrir(Number(el.dataset.folio)); });
+  const todos = document.getElementById("btn-marcar-vistos");
+  if (todos) todos.onclick = () => { nuevosCandidatos().forEach(c => state.vistos.add(c.folio)); guardarVistos(); actualizarCampana(); if (state.vista !== "detalle") render(); };
+}
+function cerrarCampana() { state.campanaAbierta = false; document.getElementById("panel-aviso").style.display = "none"; }
+function alternarCampana() {
+  state.campanaAbierta = !state.campanaAbierta;
+  const cont = document.getElementById("panel-aviso");
+  cont.style.display = state.campanaAbierta ? "block" : "none";
+  if (state.campanaAbierta && state.vistos) pintarPanelAviso();
+}
+let temporizadorToast = null;
+function mostrarToast(texto, folio) {
+  const t = document.getElementById("toast");
+  t.textContent = texto; t.style.display = "block";
+  t.onclick = () => { t.style.display = "none"; abrir(folio); };
+  clearTimeout(temporizadorToast);
+  temporizadorToast = setTimeout(() => { t.style.display = "none"; }, 9000);
+}
+function procesarNuevos() {
+  if (state.vistos === null) {
+    state.vistos = leerVistos();
+    if (state.vistos === null) { state.vistos = new Set(state.evaluaciones.map(c => c.folio)); guardarVistos(); } // primera vez: nada se marca como nuevo
+  }
+  if (state.conocidos !== null) {
+    const llegaron = state.evaluaciones.filter(c => !state.conocidos.has(c.folio)).sort((a, b) => b.ts - a.ts);
+    if (llegaron.length === 1) mostrarToast(`Nuevo candidato: ${llegaron[0].nombre} · ${llegaron[0].vacante}`, llegaron[0].folio);
+    else if (llegaron.length > 1) mostrarToast(`${llegaron.length} candidatos nuevos`, llegaron[0].folio);
+  }
+  state.conocidos = new Set(state.evaluaciones.map(c => c.folio));
+  actualizarCampana();
+}
+function iniciarActualizacionAutomatica() {
+  if (state.timer) return;
+  state.timer = setInterval(() => cargarDatos({ silencioso: true }), (CONFIG.ACTUALIZAR_CADA_SEGUNDOS || 30) * 1000);
+}
+
+async function cargarDatos(opciones = {}) {
+  const silencioso = !!opciones.silencioso;
+  if (silencioso && state.refrescando) return;
+  state.refrescando = true;
+  if (!silencioso) { state.loading = true; state.error = null; render(); }
+  try {
+    const [{ data: vacantesData, error: e1 }, { data: evalData, error: e2 },
+           { data: convData, error: e3 }, { data: entData, error: e4 }] = await Promise.all([
+      supa.from("vacantes").select("*").order("id"),
+      supa.from("evaluaciones").select("*").order("creado_en", { ascending: false }),
+      supa.from("conversaciones").select("telefono, edad, tiene_rfc"),
+      supa.from("entrevistas_notificadas").select("folio, fecha_hora_notificada, notificado_en").order("notificado_en", { ascending: false })
+    ]);
+    if (e1) throw e1; if (e2) throw e2; if (e3) throw e3; if (e4) throw e4;
+
+    const vacantesById = Object.fromEntries((vacantesData || []).map(v => [v.id, v]));
+    const convByTel = Object.fromEntries((convData || []).map(c => [c.telefono, c]));
+    const entByFolio = {};
+    for (const row of (entData || [])) {
+      if (!entByFolio[row.folio]) entByFolio[row.folio] = row; // ya viene ordenado por notificado_en desc
+    }
+
+    state.vacantes = vacantesData || [];
+    state.evaluaciones = (evalData || []).map(e => {
+      const conv = convByTel[e.telefono] || {};
+      const ent = entByFolio[e.id];
+      let estado = "Sin agendar";
+      if (ent && ent.fecha_hora_notificada) {
+        const fh = new Date(ent.fecha_hora_notificada);
+        const legible = fh.toLocaleString("es-MX", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+        estado = (fh.getTime() < Date.now() ? "Realizada · " : "Agendada · ") + legible;
+      }
+      if (estado === "Sin agendar" && state.agendadasLocal[e.id]) estado = state.agendadasLocal[e.id];
+      return {
+        folio: e.id,
+        nombre: e.nombre || "(sin nombre)",
+        telefono: e.telefono,
+        vacanteId: e.vacante_id,
+        vacante: vacantesById[e.vacante_id] ? vacantesById[e.vacante_id].titulo : "(vacante desconocida)",
+        score: e.score ?? 0,
+        rec: recKey(e.recomendacion),
+        ts: leerFecha(e.creado_en) ? leerFecha(e.creado_en).getTime() : 0,
+        fecha: leerFecha(e.creado_en) ? leerFecha(e.creado_en).toLocaleString("es-MX", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "",
+        estado,
+        edad: conv.edad ?? "—",
+        rfc: conv.tiene_rfc === true ? "Sí" : conv.tiene_rfc === false ? "No" : "—",
+        cvBase64: e.cv_base64 || null,
+        sinCv: e.cv_url === "sin_cv",
+        desglose: leerDesglose(e.desglose),
+        resumen: e.resumen || "",
+        fortalezas: Array.isArray(e.fortalezas) ? e.fortalezas : [],
+        riesgos: Array.isArray(e.riesgos) ? e.riesgos : []
+      };
+    });
+    procesarNuevos();
+  } catch (err) {
+    console.error(err);
+    if (!silencioso) state.error = err.message || String(err);
+    else { state.refrescando = false; return; }   // una falla de red en el refresco automático no tira el panel
+  }
+  state.refrescando = false;
+  state.loading = false;
+  state.ultimaActualizacion = new Date();
+  if (!silencioso) { render(); return; }
+  // Refresco automático: solo se redibuja si no se está escribiendo ni hay un cuadro abierto
+  const a = document.activeElement;
+  const escribiendo = a && ["INPUT", "SELECT", "TEXTAREA"].includes(a.tagName);
+  if (state.vista !== "detalle" && !escribiendo && !state.campanaAbierta) render(); else actualizarEncabezado();
+}
+
+/* ===================== ACCIONES ===================== */
+function abrir(folio) { marcarVisto(folio); state.vista = "detalle"; state.seleccion = folio; render(); }
+
+function verCV(folio) {
+  const c = state.evaluaciones.find(x => x.folio === folio);
+  if (!c || !c.cvBase64) { alert("Este candidato no tiene un CV almacenado."); return; }
+  const byteChars = atob(c.cvBase64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  window.open(URL.createObjectURL(blob), "_blank");
+}
+
+function hoyLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+async function confirmarAgenda() {
+  if (!state.hora || !state.fecha || !state.seleccion || state.confirmando) return;
+  if (!CONFIG.WEBHOOK_AGENDAR_URL || CONFIG.WEBHOOK_AGENDAR_URL.startsWith("PEGA_AQUI")) {
+    alert("Falta configurar la URL del flujo de n8n (WEBHOOK_AGENDAR_URL) en el código del archivo.");
+    return;
+  }
+  state.confirmando = true; render();
+  try {
+    let resp;
+    try {
+      resp = await fetch(CONFIG.WEBHOOK_AGENDAR_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folio: state.seleccion, fecha: state.fecha, hora: state.hora, clave: CONFIG.WEBHOOK_CLAVE })
+      });
+    } catch (e) {
+      throw new Error("No se pudo conectar con n8n. Revisa tu conexión a internet.");
+    }
+    let datos = null;
+    try { datos = await resp.json(); } catch (e) {}
+    if (!resp.ok || !datos || datos.ok !== true) {
+      if (datos && datos.error) throw new Error(datos.error);
+      if (resp.status === 404) throw new Error('No se encontró el flujo en n8n. Revisa que "Agendar Entrevista desde el Panel" esté publicado.');
+      throw new Error("n8n respondió con error " + resp.status + ".");
+    }
+    state.resultadoAgenda = datos;
+    state.agendadasLocal[state.seleccion] = "Agendada · " + fechaLegibleAgenda() + (datos.aviso_enviado ? "" : " (aviso pendiente)");
+    const c = state.evaluaciones.find(x => x.folio === state.seleccion);
+    if (c) c.estado = state.agendadasLocal[state.seleccion];
+    state.agenda = "confirmada";
+  } catch (err) {
+    alert("No se pudo agendar la entrevista: " + err.message);
+  }
+  state.confirmando = false;
+  render();
+}
+
+function exportarCSV() {
+  const filas = filasFiltradas();
+  const encabezado = ["Folio","Nombre","Vacante","Score","Recomendacion","SinCV","Evaluado","Estado"];
+  const lineas = [encabezado.join(",")].concat(filas.map(c =>
+    [c.folio, `"${c.nombre}"`, `"${c.vacante}"`, c.score, REC[c.rec].texto, c.sinCv ? "Sí" : "No", `"${c.fecha}"`, `"${c.estado}"`].join(",")
+  ));
+  const blob = new Blob([lineas.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "candidatos_drfc.csv";
+  a.click();
+}
+
+/* ===================== DERIVADOS ===================== */
+function dentroDeFecha(c) {
+  const p = state.fechaPreset;
+  if (p === "todo") return true;
+  const ahora = new Date();
+  const inicioHoy = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate()).getTime();
+  const DIA = 86400000;
+  if (p === "hoy") return c.ts >= inicioHoy;
+  if (p === "7") return c.ts >= inicioHoy - 6 * DIA;
+  if (p === "30") return c.ts >= inicioHoy - 29 * DIA;
+  if (p === "rango") {
+    const d = state.desde ? new Date(state.desde + "T00:00:00").getTime() : -Infinity;
+    const h = state.hasta ? new Date(state.hasta + "T23:59:59.999").getTime() : Infinity;
+    return c.ts >= d && c.ts <= h;
+  }
+  return true;
+}
+function filasFiltradas() {
+  const q = state.busqueda.trim().toLowerCase();
+  let filas = state.evaluaciones.filter(c =>
+    (state.vacante === "todas" || c.vacante === state.vacante) &&
+    (state.rec === "todas" || c.rec === state.rec) &&
+    dentroDeFecha(c) &&
+    (q === "" || c.nombre.toLowerCase().includes(q) || String(c.folio).includes(q))
+  );
+  const valor = (c) => state.ordenPor === "folio" ? c.folio : state.ordenPor === "fecha" ? c.ts : c.score;
+  filas.sort((a, b) => {
+    const d = state.ordenDesc ? valor(b) - valor(a) : valor(a) - valor(b);
+    return d !== 0 ? d : b.ts - a.ts;   // si empatan, el más reciente primero
+  });
+  return filas;
+}
+function paginaActual(filas) {
+  const inicio = (state.pagina - 1) * state.porPagina;
+  return filas.slice(inicio, inicio + state.porPagina);
+}
+
+function fechaLegibleAgenda() {
+  const [y, m, d] = state.fecha.split("-").map(Number);
+  const meses = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  return `${d} ${meses[m - 1]} ${y}, ${state.hora}`;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+/* ===================== RENDER ===================== */
+function render() {
+  actualizarEncabezado();
+
+  const root = document.getElementById("view-root");
+  if (state.loading) { root.innerHTML = `<p class="muted">Cargando datos de Supabase…</p>`; return; }
+  if (state.error) { root.innerHTML = `<p style="color:#a33a2e">No se pudieron cargar los datos: ${esc(state.error)}</p>`; return; }
+
+  if (state.vista === "vacantes") { root.innerHTML = renderVacantes(); bindVacantes(); return; }
+  if (state.vista === "lista") { root.innerHTML = renderLista(); bindLista(); return; }
+  if (state.vista === "detalle") { root.innerHTML = renderDetalle(); bindDetalle(); return; }
+}
+
+function renderVacantes() {
+  const tarjetas = state.vacantes.map(v => {
+    const grupo = state.evaluaciones.filter(c => c.vacanteId === v.id);
+    return { v, total: grupo.length,
+      avanzar: grupo.filter(c => c.rec === "avanzar").length,
+      agendadas: grupo.filter(c => c.estado.startsWith("Agendada")).length,
+      mejor: grupo.length ? Math.max(...grupo.map(c => c.score)) : 0 };
+  });
+  return `
+  <div style="margin-bottom:24px">
+    <h1 style="font-size:38px">Vacantes</h1>
+    <p class="muted" style="font-size:13.5px;margin:0">Elige una vacante para revisar sus candidatos evaluados por IA.</p>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
+    ${tarjetas.map(t => `
+    <div class="blueprint" data-vac="${esc(t.v.titulo)}" style="padding:20px 22px;display:flex;flex-direction:column;gap:14px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <div>
+        <div style="font-family:ui-monospace,monospace;font-size:11.5px" class="muted">VAC-${t.v.id}</div>
+        <h2 style="font-size:26px">${esc(t.v.titulo)}${t.v.activa === false ? ' <span class="muted" style="font-size:13px">(inactiva)</span>' : ''}</h2>
+        <div style="font-family:var(--font-heading);font-size:15px;color:var(--color-accent-700)">${esc(t.v.salario || "")}</div>
+      </div>
+      <p class="muted" style="margin:0;font-size:13px">${esc(t.v.requisitos || "")}</p>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--color-divider);border-bottom:1px solid var(--color-divider)">
+        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Evaluados</div><div style="font-family:var(--font-heading);font-size:24px">${t.total}</div></div>
+        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Avanzar</div><div style="font-family:var(--font-heading);font-size:24px;color:#2f6b46">${t.avanzar}</div></div>
+        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Agendadas</div><div style="font-family:var(--font-heading);font-size:24px;color:var(--color-accent-700)">${t.agendadas}</div></div>
+        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Score top</div><div style="font-family:var(--font-heading);font-size:24px">${t.mejor}</div></div>
+      </div>
+      <button class="btn btn-primary btn-pick" style="width:100%">Ver candidatos</button>
+    </div>`).join("")}
+  </div>`;
+}
+function bindVacantes() {
+  document.querySelectorAll("[data-vac]").forEach(el => {
+    el.querySelector(".btn-pick").onclick = () => {
+      state.vista = "lista"; state.vacante = el.dataset.vac; state.rec = "todas"; state.busqueda = ""; render();
+    };
+  });
+}
+
+function renderLista() {
+  const todasFilas = filasFiltradas();
+  const totalPaginas = Math.max(1, Math.ceil(todasFilas.length / state.porPagina));
+  if (state.pagina > totalPaginas) state.pagina = totalPaginas;
+  const filas = paginaActual(todasFilas);
+  const listaVacantes = [...new Set(state.evaluaciones.map(c => c.vacante))];
+  const kpiTotal = state.evaluaciones.length;
+  const kpiAvanzar = state.evaluaciones.filter(c => c.rec === "avanzar").length;
+  const kpiRevisar = state.evaluaciones.filter(c => c.rec === "revisar").length;
+  const kpiAgendadas = state.evaluaciones.filter(c => c.estado.startsWith("Agendada")).length;
+
+  return `
+  <button class="btn btn-ghost" id="btn-volver-vac" style="margin-bottom:12px;padding-left:0">← Vacantes</button>
+  <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px">
+    <div><h1 style="font-size:38px">${state.vacante === "todas" ? "Candidatos evaluados" : esc(state.vacante)}</h1>
+      <p class="muted" style="font-size:13.5px;margin:0">Evaluación automática por IA. Clic en una fila para ver el detalle.</p></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-secondary" id="btn-csv">Exportar CSV</button>
+      <button class="btn btn-primary" id="btn-actualizar">Actualizar</button>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));border:1px solid var(--color-divider);margin-bottom:24px">
+    <div style="padding:16px 18px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:12px;text-transform:uppercase">Evaluados</div><div style="font-family:var(--font-heading);font-size:34px">${kpiTotal}</div></div>
+    <div style="padding:16px 18px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:12px;text-transform:uppercase">Avanzar</div><div style="font-family:var(--font-heading);font-size:34px;color:#2f6b46">${kpiAvanzar}</div></div>
+    <div style="padding:16px 18px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:12px;text-transform:uppercase">Revisar</div><div style="font-family:var(--font-heading);font-size:34px;color:#8a6a12">${kpiRevisar}</div></div>
+    <div style="padding:16px 18px"><div class="muted" style="font-size:12px;text-transform:uppercase">Agendadas</div><div style="font-family:var(--font-heading);font-size:34px;color:var(--color-accent-700)">${kpiAgendadas}</div></div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;padding-bottom:14px;border-bottom:1px solid var(--color-divider);margin-bottom:14px">
+    <div style="flex:1 1 230px"><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Buscar por nombre o folio</label>
+      <input class="input" id="in-buscar" type="text" placeholder="Ej. Ramírez o 41" value="${esc(state.busqueda)}"></div>
+    <div style="flex:0 1 220px"><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Vacante</label>
+      <select class="input" id="sel-vacante">
+        <option value="todas" ${state.vacante==="todas"?"selected":""}>Todas las vacantes</option>
+        ${listaVacantes.map(v => `<option value="${esc(v)}" ${state.vacante===v?"selected":""}>${esc(v)}</option>`).join("")}
+      </select></div>
+    <div><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Fecha</label>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select class="input" id="sel-fecha" style="width:auto">
+          <option value="todo" ${state.fechaPreset==="todo"?"selected":""}>Todas</option>
+          <option value="hoy" ${state.fechaPreset==="hoy"?"selected":""}>Hoy</option>
+          <option value="7" ${state.fechaPreset==="7"?"selected":""}>Últimos 7 días</option>
+          <option value="30" ${state.fechaPreset==="30"?"selected":""}>Últimos 30 días</option>
+          <option value="rango" ${state.fechaPreset==="rango"?"selected":""}>Elegir fechas…</option>
+        </select>
+        ${state.fechaPreset === "rango" ? `<input class="input" id="in-desde" type="date" value="${state.desde}" style="width:auto" aria-label="Desde"><span class="muted">a</span><input class="input" id="in-hasta" type="date" value="${state.hasta}" style="width:auto" aria-label="Hasta">` : ""}
+      </div></div>
+    <div><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Recomendación</label>
+      <div style="display:flex;border:1px solid var(--color-divider)">
+        ${FILTROS.map(f => `<button class="seg-opt" data-rec="${f.key}" style="background:${state.rec===f.key?"var(--color-accent)":"transparent"};color:${state.rec===f.key?"#fff":"var(--color-text)"}">${f.label}</button>`).join("")}
+      </div></div>
+    <div><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Ordenar por</label>
+      <div style="display:flex">
+        <select class="input" id="sel-orden-por" style="width:auto">
+          <option value="score" ${state.ordenPor==="score"?"selected":""}>Score</option>
+          <option value="folio" ${state.ordenPor==="folio"?"selected":""}>Folio</option>
+          <option value="fecha" ${state.ordenPor==="fecha"?"selected":""}>Fecha</option>
+        </select>
+        <button class="btn btn-secondary" id="btn-orden" style="margin-left:6px" title="${state.ordenPor === "fecha" ? (state.ordenDesc ? "Más recientes primero" : "Más antiguos primero") : (state.ordenDesc ? "De mayor a menor" : "De menor a mayor")}">${state.ordenDesc ? "↓" : "↑"}</button>
+        <button class="btn btn-secondary" id="btn-recientes" style="margin-left:6px" title="Ver primero a los que llegaron más recientemente">Más recientes</button>
+      </div></div>
+  </div>
+  <table class="table">
+    <thead><tr><th>Folio</th><th>Nombre</th><th>Vacante</th><th style="width:130px">Score</th><th>Recomendación</th><th>Evaluado</th><th>Entrevista</th></tr></thead>
+    <tbody>
+      ${filas.map(c => `
+      <tr class="cand-row" data-folio="${c.folio}">
+        <td style="font-family:ui-monospace,monospace;font-size:12.5px" class="muted">EV-${c.folio}</td>
+        <td style="font-weight:500">${esc(c.nombre)}${c.sinCv ? ` <span class="muted" style="margin-left:6px;border:1px solid var(--color-divider);padding:1px 6px;font-size:11px;text-transform:uppercase">Sin CV</span>` : ""}${state.vistos && !state.vistos.has(c.folio) ? `<span class="tag-nuevo">Nuevo</span>` : ""}</td>
+        <td>${esc(c.vacante)}</td>
+        <td><div style="display:flex;align-items:center;gap:9px">
+              <span style="font-family:var(--font-heading);font-size:19px;width:28px">${c.score}</span>
+              <span style="flex:1;height:6px;background:var(--color-neutral-200);position:relative">
+                <i style="position:absolute;left:0;top:0;bottom:0;width:${c.score}%;background:${REC[c.rec].color}"></i></span></div></td>
+        <td><span style="display:inline-flex;align-items:center;gap:7px;font-family:var(--font-heading);font-size:13.5px;padding:4px 9px;background:${REC[c.rec].bg};color:${REC[c.rec].ink}">
+              <i style="width:7px;height:7px;background:${REC[c.rec].color}"></i>${REC[c.rec].texto}</span>${c.desglose && c.desglose.bloquea_avanzar ? `<div class="muted" style="font-size:11.5px;margin-top:4px">Falta un requisito indispensable</div>` : ""}</td>
+        <td class="muted" style="font-size:13px">${esc(c.fecha)}</td>
+        <td style="font-size:13px">${esc(c.estado)}</td>
+      </tr>`).join("")}
+    </tbody>
+  </table>
+  ${filas.length === 0 ? `<div class="muted" style="padding:34px 10px;text-align:center;font-size:13.5px">Ningún candidato coincide con los filtros.</div>` : ""}
+  <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:16px">
+    <p class="muted" style="font-size:12.5px;margin:0">Mostrando ${filas.length ? ((state.pagina - 1) * state.porPagina + 1) : 0}–${(state.pagina - 1) * state.porPagina + filas.length} de ${todasFilas.length} candidatos · orden por ${state.ordenPor === "fecha" ? (state.ordenDesc ? "fecha, más recientes primero" : "fecha, más antiguos primero") : (state.ordenPor === "folio" ? "folio" : "score") + (state.ordenDesc ? " descendente" : " ascendente")}</p>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="btn btn-secondary" id="btn-pag-prev" ${state.pagina <= 1 ? "disabled" : ""}>‹ Anterior</button>
+      <span class="muted" style="font-size:13px">Página ${state.pagina} de ${totalPaginas}</span>
+      <button class="btn btn-secondary" id="btn-pag-next" ${state.pagina >= totalPaginas ? "disabled" : ""}>Siguiente ›</button>
+    </div>
+  </div>`;
+}
+function bindLista() {
+  document.getElementById("btn-volver-vac").onclick = () => { state.vista = "vacantes"; render(); };
+  document.getElementById("btn-actualizar").onclick = cargarDatos;
+  document.getElementById("btn-csv").onclick = exportarCSV;
+  document.getElementById("in-buscar").oninput = e => {
+    state.busqueda = e.target.value; state.pagina = 1; render();
+    const el = document.getElementById("in-buscar"); el.focus(); el.selectionStart = el.selectionEnd = el.value.length;
+  };
+  document.getElementById("sel-vacante").onchange = e => { state.vacante = e.target.value; state.pagina = 1; render(); };
+  document.getElementById("sel-orden-por").onchange = e => { state.ordenPor = e.target.value; state.pagina = 1; render(); };
+  document.getElementById("btn-orden").onclick = () => { state.ordenDesc = !state.ordenDesc; render(); };
+  document.getElementById("btn-recientes").onclick = () => { state.ordenPor = "fecha"; state.ordenDesc = true; state.pagina = 1; render(); };
+  document.getElementById("sel-fecha").onchange = e => { state.fechaPreset = e.target.value; state.pagina = 1; render(); };
+  const dd = document.getElementById("in-desde"); if (dd) dd.onchange = e => { state.desde = e.target.value; state.pagina = 1; render(); };
+  const hh = document.getElementById("in-hasta"); if (hh) hh.onchange = e => { state.hasta = e.target.value; state.pagina = 1; render(); };
+  document.querySelectorAll("[data-rec]").forEach(el => el.onclick = () => { state.rec = el.dataset.rec; state.pagina = 1; render(); });
+  document.querySelectorAll(".cand-row").forEach(el => el.onclick = () => abrir(Number(el.dataset.folio)));
+  const prev = document.getElementById("btn-pag-prev");
+  if (prev) prev.onclick = () => { state.pagina--; render(); };
+  const next = document.getElementById("btn-pag-next");
+  if (next) next.onclick = () => { state.pagina++; render(); };
+}
+
+/* ===================== DESGLOSE DE LA CALIFICACIÓN ===================== */
+function leerDesglose(d) {
+  if (!d) return null;
+  try { d = typeof d === "string" ? JSON.parse(d) : d; } catch (e) { return null; }
+  return d && Array.isArray(d.criterios) ? d : null;
+}
+const ESCOLARIDAD = { primaria: "Primaria", secundaria: "Secundaria", preparatoria_trunca: "Preparatoria trunca", preparatoria: "Preparatoria terminada", tecnica: "Carrera técnica", licenciatura: "Licenciatura o más" };
+function pts(n) { return String(Math.round(Number(n) * 10) / 10); }
+function nivelInfo(n) {
+  if (n >= 1) return { texto: "Cumple", marca: "✓", color: "#2f6b46", bg: "#e4efe7", ink: "#20492f" };
+  if (n > 0)  return { texto: "Parcial", marca: "◐", color: "#b5891a", bg: "#f6efdc", ink: "#6d5210" };
+  return { texto: "No cumple", marca: "✕", color: "#a33a2e", bg: "#f4e3e0", ink: "#7a2b21" };
+}
+function renderDesglose(c) {
+  const marco = (contenido) => `
+    <div class="blueprint" style="padding:18px 20px;margin-top:22px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="font-size:15px;text-transform:uppercase;color:var(--color-accent-700)">Cómo se calculó la calificación</h3>
+      ${contenido}
+    </div>`;
+  const d = c.desglose;
+  if (!d) return marco(`<p class="muted" style="font-size:13.5px;margin:0">Esta evaluación se calculó antes de que existiera el desglose por criterios, por eso no hay detalle.</p>`);
+
+  const origen = (x) => x.fuente === "chat" ? "Declarado en el chat" : (c.sinCv ? "Declarado (sin CV)" : "Leído del CV");
+  const resultado = (x) => {
+    const n = nivelInfo(x.nivel);
+    let detalle = "";
+    if (x.fuente === "chat") detalle = ESCOLARIDAD[x.detalle] || x.detalle;
+    return `<span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--font-heading);font-size:13px;padding:2px 8px;background:${n.bg};color:${n.ink}">${n.marca} ${n.texto}</span>${detalle ? `<span class="muted" style="font-size:12.5px;margin-left:8px">${esc(detalle)}</span>` : ""}`;
+  };
+  const fila = (x) => `<tr>
+      <td>${esc(x.criterio)}</td>
+      <td class="muted" style="font-size:12.5px;white-space:nowrap">${origen(x)}</td>
+      <td style="text-align:right">${x.peso}</td>
+      <td>${resultado(x)}</td>
+      <td style="text-align:right;font-family:var(--font-heading);font-size:16px">${pts(x.puntos)}</td></tr>`;
+
+  const base = d.criterios.filter(x => !x.es_plus);
+  const extras = d.criterios.filter(x => x.es_plus);
+  const umbral = d.umbral ?? 80;
+  const aviso = d.bloquea_avanzar
+    ? `<p style="margin:14px 0 0;padding:10px 12px;background:#f6efdc;color:#6d5210;font-size:13.5px">No puede quedar en «Avanzar» aunque su calificación llegue al umbral: no cumple un requisito indispensable (ver Riesgos).</p>`
+    : "";
+  const leyenda = c.sinCv
+    ? "Esta persona no envió CV: todo lo que se muestra lo declaró ella misma y debe confirmarse en la entrevista."
+    : "«Declarado en el chat» lo respondió el candidato; «Leído del CV» lo encontró la IA en el documento.";
+
+  return marco(`
+      <p class="muted" style="font-size:13px;margin:0 0 12px">${leyenda}</p>
+      <div style="overflow-x:auto">
+      <table class="table">
+        <thead><tr><th>Criterio</th><th>Origen</th><th style="text-align:right">Peso</th><th>Resultado</th><th style="text-align:right">Puntos</th></tr></thead>
+        <tbody>
+          ${base.map(fila).join("")}
+          ${extras.length ? `<tr><td colspan="5" class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;padding-top:16px">Extras (suman hasta +10)</td></tr>${extras.map(fila).join("")}` : ""}
+        </tbody>
+      </table>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:24px;margin-top:14px;padding-top:14px;border-top:1px solid var(--color-divider);font-size:14px">
+        <div><span class="muted">Criterios</span> <strong>${pts(d.base)}</strong> <span class="muted">de 100</span></div>
+        <div><span class="muted">Extras</span> <strong>+${pts(d.extras_aplicados ?? 0)}</strong> <span class="muted">(máx. 10)</span></div>
+        <div><span class="muted">Calificación</span> <strong>${c.score}</strong></div>
+        <div><span class="muted">Umbral para avanzar en esta vacante</span> <strong>${umbral}</strong></div>
+      </div>
+      ${aviso}`);
+}
+
+function renderDetalle() {
+  const c = state.evaluaciones.find(x => x.folio === state.seleccion) || state.evaluaciones[0];
+  if (!c) return `<p class="muted">No hay candidatos.</p>`;
+  const modal = state.agenda ? renderAgendaModal(c) : "";
+  const yaAgendada = c.estado.startsWith("Agendada");
+  return `
+  <button class="btn btn-ghost" id="btn-volver-lista" style="margin-bottom:14px;padding-left:0">← Volver a la lista</button>
+  <div style="display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:22px;align-items:start">
+    <div>
+      <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--color-divider)">
+        <div><div class="muted" style="font-family:ui-monospace,monospace;font-size:12.5px">Folio EV-${c.folio}</div>
+          <h1 style="font-size:40px">${esc(c.nombre)}</h1>
+          <div class="muted" style="font-size:14px">${esc(c.vacante)} · ${esc(c.telefono)}${c.sinCv ? ` <span style="margin-left:8px;border:1px solid var(--color-divider);padding:1px 7px;font-size:11.5px;text-transform:uppercase">Sin CV</span>` : ""}</div></div>
+        <span style="display:inline-flex;align-items:center;gap:8px;font-family:var(--font-heading);font-size:15px;padding:6px 12px;background:${REC[c.rec].bg};color:${REC[c.rec].ink}">
+          <i style="width:8px;height:8px;background:${REC[c.rec].color}"></i>${REC[c.rec].texto}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--color-divider);border-top:0;margin-bottom:22px">
+        <div style="padding:14px 16px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:11.5px;text-transform:uppercase">Score</div><div style="font-family:var(--font-heading);font-size:32px">${c.score}<span class="muted" style="font-size:15px">/100</span></div></div>
+        <div style="padding:14px 16px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:11.5px;text-transform:uppercase">Edad</div><div style="font-family:var(--font-heading);font-size:32px">${esc(c.edad)}</div></div>
+        <div style="padding:14px 16px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:11.5px;text-transform:uppercase">RFC</div><div style="font-family:var(--font-heading);font-size:32px">${esc(c.rfc)}</div></div>
+        <div style="padding:14px 16px"><div class="muted" style="font-size:11.5px;text-transform:uppercase">Entrevista</div><div style="font-family:var(--font-heading);font-size:19px;margin-top:6px">${esc(c.estado)}</div></div>
+      </div>
+      <h3 style="font-size:15px;text-transform:uppercase;color:var(--color-accent-700)">Resumen del perfil</h3>
+      <p style="max-width:62ch">${esc(c.resumen)}</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));border:1px solid var(--color-divider)">
+        <div style="padding:18px;border-right:1px solid var(--color-divider)">
+          <h3 style="font-size:14px;text-transform:uppercase">Fortalezas</h3>
+          <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px">
+            ${c.fortalezas.map(f => `<li style="display:flex;gap:9px;font-size:14px"><i style="flex:none;width:7px;height:7px;margin-top:7px;background:#2f6b46"></i>${esc(f)}</li>`).join("")}
+          </ul></div>
+        <div style="padding:18px">
+          <h3 style="font-size:14px;text-transform:uppercase">Riesgos</h3>
+          <ul style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px">
+            ${c.riesgos.map(r => `<li style="display:flex;gap:9px;font-size:14px"><i style="flex:none;width:7px;height:7px;margin-top:7px;background:#a33a2e"></i>${esc(r)}</li>`).join("")}
+          </ul></div>
+      </div>
+      ${renderDesglose(c)}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="blueprint" style="padding:18px">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h3 style="font-size:14px;text-transform:uppercase">Curriculum</h3>
+        <div class="muted" style="margin-bottom:14px;font-size:12.5px">${c.sinCv ? "Sin CV: información declarada por el candidato en el chat. Confirmar en la entrevista." : (c.cvBase64 ? "CV almacenado" : "Sin CV almacenado")}</div>
+        <button class="btn btn-secondary" id="btn-ver-cv" style="width:100%" ${c.cvBase64 ? "" : "disabled"}>Ver CV original</button>
+      </div>
+      <div class="blueprint" style="padding:18px;background:var(--color-accent-100)">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+        <h3 style="font-size:14px;text-transform:uppercase">Siguiente paso</h3>
+        ${yaAgendada
+          ? `<p style="font-size:13.5px;color:var(--color-accent-900);margin:0 0 6px"><strong>${esc(c.estado)}</strong></p>
+             <p style="font-size:13px;color:var(--color-accent-900)">Para cambiar la fecha, mueve el evento <code>Entrevista - Folio: ${c.folio}</code> directamente en Google Calendar: el candidato recibe el aviso actualizado por WhatsApp.</p>
+             <button class="btn btn-primary" id="btn-agendar" style="width:100%" disabled>Ya está agendada</button>`
+          : `<p style="font-size:13.5px;color:var(--color-accent-900)">Al confirmar se crea el evento <code>Entrevista - Folio: ${c.folio}</code> en Calendar y el candidato recibe el aviso por WhatsApp al momento.</p>
+             <button class="btn btn-primary" id="btn-agendar" style="width:100%">Agendar entrevista</button>`}
+      </div>
+      <div style="border:1px solid var(--color-divider);padding:16px 18px">
+        <h3 style="font-size:14px;text-transform:uppercase">Trazabilidad</h3>
+        <dl style="margin:0;display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px">
+          <dt class="muted">Evaluado</dt><dd style="margin:0">${esc(c.fecha)}</dd>
+          <dt class="muted">Fuente</dt><dd style="margin:0">evaluaciones · id ${c.folio}</dd>
+          <dt class="muted">Vacante</dt><dd style="margin:0">VAC-${c.vacanteId}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  ${modal}`;
+}
+function renderAgendaModal(c) {
+  if (state.agenda === "confirmada") {
+    return `<div class="dialog-backdrop"><div class="blueprint" style="background:var(--color-bg);width:min(520px,100%);padding:24px 26px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h2 style="font-size:28px">Entrevista agendada</h2>
+      <p style="font-size:14px">Evento creado en Google Calendar: <strong>Entrevista - Folio: ${c.folio}</strong></p>
+      <p style="font-size:14px">${esc((state.resultadoAgenda && state.resultadoAgenda.fecha_hora) || fechaLegibleAgenda())}</p>
+      ${state.resultadoAgenda && state.resultadoAgenda.aviso_enviado
+        ? `<p style="font-size:14px;padding:10px 12px;background:#e4efe7;color:#20492f">✓ El candidato recibió el aviso por WhatsApp.</p>`
+        : `<p style="font-size:14px;padding:10px 12px;background:#f6efdc;color:#6d5210">El aviso por WhatsApp no se pudo enviar en este momento. El sistema lo reintentará automáticamente en unos minutos.</p>`}
+      <button class="btn btn-primary" id="btn-cerrar-agenda" style="width:100%">Listo</button>
+    </div></div>`;
+  }
+  return `<div class="dialog-backdrop"><div class="blueprint" style="background:var(--color-bg);width:min(520px,100%);padding:24px 26px">
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:18px">
+      <div><h2 style="font-size:28px">Agendar entrevista</h2><p class="muted" style="font-size:13px">${esc(c.nombre)} · ${esc(c.vacante)}</p></div>
+      <button class="btn btn-ghost" id="btn-cerrar-agenda" style="font-size:18px;padding:0 4px">✕</button>
+    </div>
+    <div style="margin-bottom:16px"><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Folio del candidato</label>
+      <input class="input" type="text" value="EV-${c.folio}" disabled style="font-family:ui-monospace,monospace"></div>
+    <div style="margin-bottom:18px"><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Fecha</label>
+      <input class="input" id="in-fecha" type="date" value="${state.fecha}" min="${hoyLocal()}"></div>
+    <div style="margin-bottom:6px" class="muted" style="font-size:12px;text-transform:uppercase">Hora · bloques de 30 min</div>
+    <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:8px">
+      ${HORAS.map(h => `<button class="slot" data-hora="${h}" style="background:${state.hora===h?"var(--color-accent)":"transparent"};color:${state.hora===h?"#fff":"var(--color-text)"};border-color:${state.hora===h?"var(--color-accent)":"var(--color-divider)"}">${h}</button>`).join("")}
+    </div>
+    <p class="muted" style="font-size:12px;margin-bottom:20px">Ventana de entrevistas: 11:00 AM – 1:30 PM.</p>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-secondary" id="btn-cancelar-agenda" style="flex:1">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirmar-agenda" style="flex:2" ${!state.hora || state.confirmando ? "disabled" : ""}>${state.confirmando ? "Agendando…" : "Confirmar"}</button>
+    </div>
+  </div></div>`;
+}
+function bindDetalle() {
+  document.getElementById("btn-volver-lista").onclick = () => { state.vista = "lista"; render(); };
+  const cvBtn = document.getElementById("btn-ver-cv");
+  if (cvBtn && !cvBtn.disabled) cvBtn.onclick = () => verCV(state.seleccion);
+  const agBtn = document.getElementById("btn-agendar");
+  if (agBtn) agBtn.onclick = () => { state.agenda = "abierta"; state.hora = ""; render(); };
+  const cerrar = document.getElementById("btn-cerrar-agenda");
+  if (cerrar) cerrar.onclick = () => { const confirmada = state.agenda === "confirmada"; state.agenda = null; render(); if (confirmada) cargarDatos({ silencioso: true }); };
+  const cancelar = document.getElementById("btn-cancelar-agenda");
+  if (cancelar) cancelar.onclick = () => { state.agenda = null; render(); };
+  const fechaInput = document.getElementById("in-fecha");
+  if (fechaInput) fechaInput.onchange = e => { state.fecha = e.target.value; render(); };
+  document.querySelectorAll("[data-hora]").forEach(el => el.onclick = () => { state.hora = el.dataset.hora; render(); });
+  const confirmar = document.getElementById("btn-confirmar-agenda");
+  if (confirmar) confirmar.onclick = confirmarAgenda;
+}
+
+/* ===================== ACCESO ===================== */
+document.getElementById("gate-btn").onclick = intentarEntrar;
+document.getElementById("gate-input").onkeydown = e => { if (e.key === "Enter") intentarEntrar(); };
+function intentarEntrar() {
+  const val = document.getElementById("gate-input").value;
+  if (val === CONFIG.PASSWORD) {
+    document.getElementById("gate").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    cargarDatos();
+    iniciarActualizacionAutomatica();
+  } else {
+    document.getElementById("gate-error").style.display = "block";
+  }
+}
+
+/* Sin login: si PEDIR_CONTRASENA está en false, el panel abre directo */
+if (!CONFIG.PEDIR_CONTRASENA) {
+  document.getElementById("gate").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  cargarDatos();
+  iniciarActualizacionAutomatica();
+}
+
+/* Campanita de candidatos nuevos */
+document.getElementById("btn-campana").onclick = (e) => { e.stopPropagation(); alternarCampana(); };
+document.addEventListener("click", (e) => { if (state.campanaAbierta && !e.target.closest("#panel-aviso")) cerrarCampana(); });
+</script>
+</body>
+</html>
