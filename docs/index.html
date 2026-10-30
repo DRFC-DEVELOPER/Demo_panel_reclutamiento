@@ -20,6 +20,10 @@ const CONFIG = {
   // true = pide la contraseña al abrir el panel; false = abre directo, sin login.
   // Cada cuántos segundos revisa si llegaron candidatos nuevos (mientras el panel está abierto).
   ACTUALIZAR_CADA_SEGUNDOS: 30,
+  // Días sin decisión (agendar o descartar) para que el panel recuerde que una solicitud sigue pendiente.
+  DIAS_RECORDATORIO: 5,
+  // Hoja de Google donde se administran título, requisitos, sueldo, imagen y estado de las vacantes.
+  URL_HOJA_VACANTES: "https://docs.google.com/spreadsheets/d/1wXaNx1HEiOTbr__m9Q5VVRcVBG_FJv9YxoP8YDqnuCQ/edit",
   PEDIR_CONTRASENA: false,
   PASSWORD: "drfc2026",
   // URL del webhook de n8n que crea el evento en Calendar al confirmar una entrevista.
@@ -142,8 +146,16 @@ const state = {
   desde: "",
   hasta: "",
   vistos: null,
+  vacanteSel: null,
+  vacantesDetalle: {},
+  detalleVacErr: null,
+  guardandoVac: false,
   resultadoAgenda: null,
   agendadasLocal: {},
+  estadoFiltro: "activos",
+  descartar: null,
+  descartando: false,
+  descartadosLocal: {},
   conocidos: null,
   campanaAbierta: false,
   refrescando: false,
@@ -175,8 +187,7 @@ const HORAS = ["11:00 AM", "11:30 AM", "12:00 PM", "12:30 PM", "1:00 PM"];
 const FILTROS = [
   { key: "todas", label: "Todas" },
   { key: "avanzar", label: "Avanzar" },
-  { key: "revisar", label: "Revisar" },
-  { key: "descartar", label: "Descartar" }
+  { key: "revisar", label: "Revisar" }
 ];
 
 /* ===================== SUPABASE ===================== */
@@ -197,8 +208,25 @@ function guardarVistos() { try { localStorage.setItem(CLAVE_VISTOS, JSON.stringi
 function marcarVisto(folio) {
   if (state.vistos && !state.vistos.has(folio)) { state.vistos.add(folio); guardarVistos(); actualizarCampana(); }
 }
+// Una solicitud está "pendiente" si no se ha tomado ninguna decisión (agendar o descartar) y ya pasaron los días del recordatorio.
+function diasSinRevisar(c) {
+  if (c.descartado || c.estado !== "Sin agendar" || !c.ts) return null;
+  return Math.floor((Date.now() - c.ts) / 86400000);
+}
+function esPendiente(c) {
+  const d = diasSinRevisar(c);
+  return d !== null && d >= (CONFIG.DIAS_RECORDATORIO || 5);
+}
+function pendientesCandidatos() {
+  return state.evaluaciones.filter(esPendiente).sort((a, b) => a.ts - b.ts);   // los más antiguos primero
+}
+function avisosTotales() {
+  const nuevos = nuevosCandidatos();
+  const idsNuevos = new Set(nuevos.map(c => c.folio));
+  return { nuevos, pendientes: pendientesCandidatos().filter(c => !idsNuevos.has(c.folio)) };
+}
 function nuevosCandidatos() {
-  return state.evaluaciones.filter(c => !state.vistos.has(c.folio)).sort((a, b) => b.ts - a.ts);
+  return state.evaluaciones.filter(c => !c.descartado && !state.vistos.has(c.folio)).sort((a, b) => b.ts - a.ts);
 }
 function hace(ts) {
   const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
@@ -215,11 +243,12 @@ function actualizarEncabezado() {
     ? "Cargando…"
     : state.error
       ? "Error: " + state.error
-      : `Sincronizado · ${state.evaluaciones.length} candidatos${hora ? " · actualizado " + hora : ""}`;
+      : `Sincronizado · ${state.evaluaciones.length} ${state.evaluaciones.length === 1 ? "candidato" : "candidatos"}${hora ? " · actualizado " + hora : ""}`;
 }
 function actualizarCampana() {
   if (!state.vistos) return;
-  const n = nuevosCandidatos().length;
+  const { nuevos, pendientes } = avisosTotales();
+  const n = nuevos.length + pendientes.length;
   const badge = document.getElementById("campana-badge");
   badge.style.display = n ? "block" : "none";
   badge.textContent = n > 99 ? "99+" : String(n);
@@ -227,21 +256,25 @@ function actualizarCampana() {
   if (state.campanaAbierta) pintarPanelAviso();
 }
 function pintarPanelAviso() {
-  const lista = nuevosCandidatos();
+  const { nuevos, pendientes } = avisosTotales();
   const cont = document.getElementById("panel-aviso");
-  const item = (c) => `<button class="aviso-item" data-folio="${c.folio}">
-      <div style="display:flex;justify-content:space-between;gap:10px"><strong>${esc(c.nombre)}</strong><span class="muted" style="font-size:12px;white-space:nowrap">${hace(c.ts)}</span></div>
+  const item = (c, cuando) => `<button class="aviso-item" data-folio="${c.folio}">
+      <div style="display:flex;justify-content:space-between;gap:10px"><strong>${esc(c.nombre)}</strong><span class="muted" style="font-size:12px;white-space:nowrap">${cuando}</span></div>
       <div class="muted" style="font-size:13px">${esc(c.vacante)}${c.sinCv ? " · Sin CV" : ""}</div>
       <div style="font-size:13px;margin-top:2px">Score ${c.score} · ${REC[c.rec].texto}</div></button>`;
+  const seccion = (titulo, lista, cuando) => lista.length ? `
+      <div class="muted" style="padding:9px 14px 5px;font-size:11.5px;text-transform:uppercase;letter-spacing:.08em">${titulo} (${lista.length})</div>
+      ${lista.slice(0, 6).map(c => item(c, cuando(c))).join("")}${lista.length > 6 ? `<div class="muted" style="padding:8px 14px;font-size:12.5px">y ${lista.length - 6} más…</div>` : ""}` : "";
+  const dias = CONFIG.DIAS_RECORDATORIO || 5;
   cont.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--color-divider)">
-      <strong style="font-family:var(--font-heading);font-size:16px;white-space:nowrap">Candidatos nuevos</strong>
-      ${lista.length ? `<button class="btn btn-ghost" id="btn-marcar-vistos" style="font-size:13px">Marcar todos como vistos</button>` : ""}</div>
-    ${lista.length
-      ? lista.slice(0, 8).map(item).join("") + (lista.length > 8 ? `<div class="muted" style="padding:10px 14px;font-size:12.5px">y ${lista.length - 8} más…</div>` : "")
-      : `<div class="muted" style="padding:16px 14px;font-size:13.5px">No hay candidatos nuevos.</div>`}`;
+      <strong style="font-family:var(--font-heading);font-size:16px;white-space:nowrap">Avisos</strong>
+      ${nuevos.length ? `<button class="btn btn-ghost" id="btn-marcar-vistos" style="font-size:13px">Marcar nuevos como vistos</button>` : ""}</div>
+    ${seccion("Candidatos nuevos", nuevos, c => hace(c.ts))}
+    ${seccion(`Pendientes de revisar · más de ${dias} días`, pendientes, c => `hace ${diasSinRevisar(c)} días`)}
+    ${(!nuevos.length && !pendientes.length) ? `<div class="muted" style="padding:16px 14px;font-size:13.5px">No hay avisos.</div>` : ""}`;
   cont.querySelectorAll(".aviso-item").forEach(el => el.onclick = () => { cerrarCampana(); abrir(Number(el.dataset.folio)); });
   const todos = document.getElementById("btn-marcar-vistos");
-  if (todos) todos.onclick = () => { nuevosCandidatos().forEach(c => state.vistos.add(c.folio)); guardarVistos(); actualizarCampana(); if (state.vista !== "detalle") render(); };
+  if (todos) todos.onclick = () => { nuevosCandidatos().forEach(c => state.vistos.add(c.folio)); guardarVistos(); actualizarCampana(); if (!["detalle", "vacante"].includes(state.vista)) render(); };
 }
 function cerrarCampana() { state.campanaAbierta = false; document.getElementById("panel-aviso").style.display = "none"; }
 function alternarCampana() {
@@ -324,12 +357,23 @@ async function cargarDatos(opciones = {}) {
         rfc: conv.tiene_rfc === true ? "Sí" : conv.tiene_rfc === false ? "No" : "—",
         cvBase64: e.cv_base64 || null,
         sinCv: e.cv_url === "sin_cv",
+        descartado: !!e.descartado_en || !!state.descartadosLocal[e.id],
+        descartadoEn: leerFecha(e.descartado_en) ? leerFecha(e.descartado_en).getTime() : (state.descartadosLocal[e.id] || 0),
         desglose: leerDesglose(e.desglose),
         resumen: e.resumen || "",
         fortalezas: Array.isArray(e.fortalezas) ? e.fortalezas : [],
         riesgos: Array.isArray(e.riesgos) ? e.riesgos : []
       };
     });
+    try {
+      const { data: det, error: eDet } = await supa.rpc("panel_vacantes_completas", { p_clave: CONFIG.WEBHOOK_CLAVE });
+      if (eDet) throw eDet;
+      if (!det || det.ok !== true) throw new Error((det && det.error) || "Respuesta no válida.");
+      state.vacantesDetalle = Object.fromEntries(det.vacantes.map(v => [v.id, v]));
+      state.detalleVacErr = null;
+    } catch (errDet) {
+      state.detalleVacErr = errDet.code === "PGRST202" ? "Faltan las funciones de vacantes en Supabase. Corre el SQL de vacantes." : (errDet.message || String(errDet));
+    }
     procesarNuevos();
   } catch (err) {
     console.error(err);
@@ -343,7 +387,7 @@ async function cargarDatos(opciones = {}) {
   // Refresco automático: solo se redibuja si no se está escribiendo ni hay un cuadro abierto
   const a = document.activeElement;
   const escribiendo = a && ["INPUT", "SELECT", "TEXTAREA"].includes(a.tagName);
-  if (state.vista !== "detalle" && !escribiendo && !state.campanaAbierta) render(); else actualizarEncabezado();
+  if (!["detalle", "vacante"].includes(state.vista) && !escribiendo && !state.campanaAbierta) render(); else actualizarEncabezado();
 }
 
 /* ===================== ACCIONES ===================== */
@@ -403,9 +447,9 @@ async function confirmarAgenda() {
 
 function exportarCSV() {
   const filas = filasFiltradas();
-  const encabezado = ["Folio","Nombre","Vacante","Score","Recomendacion","SinCV","Evaluado","Estado"];
+  const encabezado = ["Folio","Nombre","Vacante","Score","Recomendacion","SinCV","Descartado","Evaluado","Estado"];
   const lineas = [encabezado.join(",")].concat(filas.map(c =>
-    [c.folio, `"${c.nombre}"`, `"${c.vacante}"`, c.score, REC[c.rec].texto, c.sinCv ? "Sí" : "No", `"${c.fecha}"`, `"${c.estado}"`].join(",")
+    [c.folio, `"${c.nombre}"`, `"${c.vacante}"`, c.score, REC[c.rec].texto, c.sinCv ? "Sí" : "No", c.descartado ? "Sí" : "No", `"${c.fecha}"`, `"${c.estado}"`].join(",")
   ));
   const blob = new Blob([lineas.join("\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
@@ -437,6 +481,7 @@ function filasFiltradas() {
     (state.vacante === "todas" || c.vacante === state.vacante) &&
     (state.rec === "todas" || c.rec === state.rec) &&
     dentroDeFecha(c) &&
+    (state.estadoFiltro === "todos" || (state.estadoFiltro === "descartados" ? c.descartado : state.estadoFiltro === "pendientes" ? esPendiente(c) : !c.descartado)) &&
     (q === "" || c.nombre.toLowerCase().includes(q) || String(c.folio).includes(q))
   );
   const valor = (c) => state.ordenPor === "folio" ? c.folio : state.ordenPor === "fecha" ? c.ts : c.score;
@@ -470,11 +515,139 @@ function render() {
   if (state.vista === "vacantes") { root.innerHTML = renderVacantes(); bindVacantes(); return; }
   if (state.vista === "lista") { root.innerHTML = renderLista(); bindLista(); return; }
   if (state.vista === "detalle") { root.innerHTML = renderDetalle(); bindDetalle(); return; }
+  if (state.vista === "vacante") { root.innerHTML = renderVacante(); bindVacante(); return; }
+}
+
+/* ===================== INFORMACIÓN COMPLETA DE LA VACANTE ===================== */
+function faltaDef(id) {
+  const d = state.vacantesDetalle[id] || {};
+  const faltan = [];
+  if (d.edad_minima == null && d.edad_maxima == null) faltan.push("edad");
+  if (!d.horario) faltan.push("horario");
+  return faltan.join(" · ");
+}
+function renderVacante() {
+  const v = state.vacantes.find(x => x.id === state.vacanteSel);
+  const volver = `<button class="btn btn-ghost" id="btn-volver-vac2" style="margin-bottom:14px;padding-left:0">← Vacantes</button>`;
+  if (!v) return volver + `<p class="muted">No se encontró la vacante.</p>`;
+  const d = state.vacantesDetalle[v.id] || {};
+  const err = state.detalleVacErr;
+  const activos = state.evaluaciones.filter(c => c.vacanteId === v.id && !c.descartado).length;
+  const marco = (titulo, contenido, fondo) => `<div class="blueprint" style="padding:18px 20px;${fondo ? "background:" + fondo : ""}">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="font-size:14px;text-transform:uppercase;color:var(--color-accent-700);margin-bottom:12px">${titulo}</h3>${contenido}</div>`;
+  const fila = (k, val) => `<dt class="muted" style="font-size:13px">${k}</dt><dd style="margin:0;font-size:14px">${val}</dd>`;
+
+  const publicada = marco("Información publicada", `
+      <dl style="margin:0 0 14px;display:grid;grid-template-columns:110px 1fr;gap:10px 14px">
+        ${fila("Estado", v.activa === false ? "Inactiva (no se ofrece a los candidatos)" : "Activa")}
+        ${fila("Sueldo", v.salario ? esc(v.salario) : `<span class="muted">Sin sueldo publicado</span>`)}
+        ${fila("Requisitos", v.requisitos ? `<span style="white-space:pre-wrap">${esc(v.requisitos)}</span>` : `<span class="muted">Sin requisitos cargados</span>`)}
+        ${fila("Imagen", v.imagen_url ? `<button type="button" id="btn-ampliar-img" title="Ampliar imagen" aria-label="Ampliar la imagen de la vacante ${esc(v.titulo)}" style="display:block;padding:0;border:0;background:none;cursor:zoom-in;text-align:left"><img src="${esc(v.imagen_url)}" alt="Imagen de la vacante ${esc(v.titulo)}" style="max-width:100%;max-height:300px;object-fit:contain;border:1px solid var(--color-divider)"></button><span class="muted" style="display:block;font-size:12.5px;margin-top:6px">Toca la imagen para verla más grande.</span>` : `<span class="muted">Sin imagen: el bot manda solo el texto</span>`)}
+      </dl>
+      <a class="btn btn-secondary" href="${esc(CONFIG.URL_HOJA_VACANTES)}" target="_blank" rel="noopener">Editar en la hoja de vacantes ↗</a>
+      <p class="muted" style="font-size:12.5px;margin:10px 0 0">Título, requisitos, sueldo, imagen y estado se editan en la hoja. Se reflejan en el bot en unos 15 minutos.</p>`);
+
+  const criterios = d.criterios || [];
+  const base = criterios.filter(c => !c.es_plus), extras = criterios.filter(c => c.es_plus);
+  const filaCrit = (c) => `<tr><td>${esc(c.nombre)}${c.indispensable ? ` <span style="margin-left:6px;padding:1px 6px;font-size:11px;text-transform:uppercase;background:#f6efdc;color:#6d5210">Indispensable</span>` : ""}</td>
+      <td style="text-align:right">${c.es_plus ? "+" : ""}${c.peso}</td><td class="muted" style="font-size:12.5px">${c.fuente === "chat" ? "Pregunta en el chat" : "Lectura del CV"}</td></tr>`;
+  const calificacion = marco("Cómo se califica", err ? `<p class="muted" style="font-size:13.5px;margin:0">No se pudo cargar: ${esc(err)}</p>` : (criterios.length ? `
+      <p style="font-size:14px;margin:0 0 12px">Se recomienda avanzar con <strong>${d.umbral_avanzar ?? 80} puntos o más</strong>. ${d.permite_sin_cv ? "Permite postularse sin CV." : "Pide CV en PDF."}</p>
+      <div style="overflow-x:auto"><table class="table">
+        <thead><tr><th>Criterio</th><th style="text-align:right">Peso</th><th>Origen</th></tr></thead>
+        <tbody>${base.map(filaCrit).join("")}${extras.length ? `<tr><td colspan="3" class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;padding-top:14px">Extras (suman hasta +10)</td></tr>${extras.map(filaCrit).join("")}` : ""}</tbody>
+      </table></div>` : `<p class="muted" style="font-size:13.5px;margin:0">Esta vacante todavía no tiene criterios de calificación.</p>`));
+
+  const etiqueta = (t) => `<label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">${t}</label>`;
+  const condiciones = marco("Condiciones de la vacante", err ? `<p style="font-size:13.5px;margin:0;color:#6d5210">No se pudo cargar: ${esc(err)}</p>` : `
+      <div style="display:flex;gap:12px;margin-bottom:14px">
+        <div style="flex:1">${etiqueta("Edad mínima")}<input class="input" id="in-edad-min" type="number" min="15" max="99" inputmode="numeric" placeholder="Sin definir" value="${d.edad_minima ?? ""}"></div>
+        <div style="flex:1">${etiqueta("Edad máxima")}<input class="input" id="in-edad-max" type="number" min="15" max="99" inputmode="numeric" placeholder="Sin definir" value="${d.edad_maxima ?? ""}"></div>
+      </div>
+      <div style="margin-bottom:14px">${etiqueta("Horario laboral")}<textarea class="input" id="in-horario" rows="4" maxlength="300" placeholder="Sin definir. Ejemplo: lunes a viernes de 9:00 a 18:00" style="resize:vertical">${esc(d.horario || "")}</textarea></div>
+      <button class="btn btn-primary" id="btn-guardar-vac" style="width:100%">Guardar condiciones</button>
+      <div id="vac-msg" style="margin-top:10px;font-size:13.5px"></div>
+      <p class="muted" id="vac-actualizado" style="font-size:12.5px;margin:10px 0 0">${d.actualizado_en ? "Última actualización: " + esc(new Date(d.actualizado_en).toLocaleString("es-MX", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true })) : "Todavía no se han definido."}</p>
+      <p class="muted" style="font-size:12.5px;margin:6px 0 0">Es el registro oficial de RH. Todavía no se muestra a los candidatos en WhatsApp.</p>`, "var(--color-accent-100)");
+
+  return `${volver}
+  <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px">
+    <div><div class="muted" style="font-family:ui-monospace,monospace;font-size:12.5px">VAC-${v.id}</div><h1 style="font-size:40px">${esc(v.titulo)}</h1></div>
+    <button class="btn btn-primary" id="btn-ver-candidatos">Ver candidatos (${activos})</button>
+  </div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:22px;align-items:start">
+    <div style="display:flex;flex-direction:column;gap:22px">${publicada}${calificacion}</div>
+    <div>${condiciones}</div>
+  </div>`;
+}
+/* Visor para ver la imagen de la vacante en grande */
+function abrirVisorImagen(url, alt) {
+  if (document.getElementById("visor-imagen")) return;
+  const previo = document.activeElement;
+  const visor = document.createElement("div");
+  visor.id = "visor-imagen";
+  visor.className = "dialog-backdrop";
+  visor.setAttribute("role", "dialog");
+  visor.setAttribute("aria-modal", "true");
+  visor.setAttribute("aria-label", alt);
+  visor.style.cursor = "zoom-out";
+  visor.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:12px;max-width:96vw;cursor:default">
+      <img src="${esc(url)}" alt="${esc(alt)}" style="max-width:94vw;max-height:80vh;object-fit:contain;background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.4)">
+      <div style="display:flex;gap:10px">
+        <a class="btn" href="${esc(url)}" target="_blank" rel="noopener" style="background:#f2f2f3">Abrir en una pestaña nueva ↗</a>
+        <button type="button" class="btn btn-primary" id="btn-cerrar-visor">Cerrar</button>
+      </div></div>`;
+  const cerrar = () => { document.removeEventListener("keydown", alTeclado); visor.remove(); if (previo && previo.focus) previo.focus(); };
+  const alTeclado = (e) => { if (e.key === "Escape") cerrar(); };
+  visor.onclick = (e) => { if (e.target === visor) cerrar(); };
+  document.addEventListener("keydown", alTeclado);
+  document.body.appendChild(visor);
+  document.getElementById("btn-cerrar-visor").onclick = cerrar;
+  document.getElementById("btn-cerrar-visor").focus();
+}
+function mensajeVac(ok, texto) {
+  const el = document.getElementById("vac-msg");
+  if (el) el.innerHTML = `<span style="display:block;padding:9px 12px;background:${ok ? "#e4efe7" : "#f4e3e0"};color:${ok ? "#20492f" : "#7a2b21"}">${ok ? "✓ " : ""}${esc(texto)}</span>`;
+}
+function bindVacante() {
+  const v = state.vacantes.find(x => x.id === state.vacanteSel);
+  document.getElementById("btn-volver-vac2").onclick = () => { state.vista = "vacantes"; render(); };
+  const ver = document.getElementById("btn-ver-candidatos");
+  if (ver && v) ver.onclick = () => { state.vista = "lista"; state.vacante = v.titulo; state.rec = "todas"; state.busqueda = ""; state.estadoFiltro = "activos"; render(); };
+  const ampliar = document.getElementById("btn-ampliar-img");
+  if (ampliar && v) ampliar.onclick = () => abrirVisorImagen(v.imagen_url, "Imagen de la vacante " + v.titulo);
+  const guardar = document.getElementById("btn-guardar-vac");
+  if (!guardar || !v) return;
+  guardar.onclick = async () => {
+    const lee = (id) => { const t = document.getElementById(id).value.trim(); return t === "" ? null : Number(t); };
+    const min = lee("in-edad-min"), max = lee("in-edad-max"), horario = document.getElementById("in-horario").value;
+    const invalida = (n) => n !== null && (!Number.isInteger(n) || n < 15 || n > 99);
+    if (invalida(min)) return mensajeVac(false, "La edad mínima debe ser un número entre 15 y 99.");
+    if (invalida(max)) return mensajeVac(false, "La edad máxima debe ser un número entre 15 y 99.");
+    if (min !== null && max !== null && min > max) return mensajeVac(false, "La edad mínima no puede ser mayor que la máxima.");
+    guardar.disabled = true; guardar.textContent = "Guardando…";
+    try {
+      const { data, error } = await supa.rpc("panel_guardar_vacante", { p_vacante_id: v.id, p_edad_minima: min, p_edad_maxima: max, p_horario: horario, p_clave: CONFIG.WEBHOOK_CLAVE });
+      if (error) {
+        if (error.code === "PGRST202") throw new Error("Faltan las funciones de vacantes en Supabase. Corre el SQL de vacantes.");
+        throw new Error(error.message || "No se pudo conectar con la base de datos.");
+      }
+      if (!data || data.ok !== true) throw new Error((data && data.error) || "No se pudo guardar.");
+      state.vacantesDetalle[v.id] = { ...(state.vacantesDetalle[v.id] || {}), id: v.id, edad_minima: data.edad_minima, edad_maxima: data.edad_maxima, horario: data.horario, actualizado_en: data.actualizado_en };
+      document.getElementById("in-horario").value = data.horario || "";
+      document.getElementById("vac-actualizado").textContent = "Última actualización: " + new Date(data.actualizado_en).toLocaleString("es-MX", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+      mensajeVac(true, "Guardado.");
+    } catch (err) {
+      mensajeVac(false, err.message);
+    }
+    guardar.disabled = false; guardar.textContent = "Guardar condiciones";
+  };
 }
 
 function renderVacantes() {
   const tarjetas = state.vacantes.map(v => {
-    const grupo = state.evaluaciones.filter(c => c.vacanteId === v.id);
+    const grupo = state.evaluaciones.filter(c => c.vacanteId === v.id && !c.descartado);
     return { v, total: grupo.length,
       avanzar: grupo.filter(c => c.rec === "avanzar").length,
       agendadas: grupo.filter(c => c.estado.startsWith("Agendada")).length,
@@ -487,7 +660,7 @@ function renderVacantes() {
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
     ${tarjetas.map(t => `
-    <div class="blueprint" data-vac="${esc(t.v.titulo)}" style="padding:20px 22px;display:flex;flex-direction:column;gap:14px">
+    <div class="blueprint" data-vac="${esc(t.v.titulo)}" data-vid="${t.v.id}" style="padding:20px 22px;display:flex;flex-direction:column;gap:14px">
       <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
       <div>
         <div style="font-family:ui-monospace,monospace;font-size:11.5px" class="muted">VAC-${t.v.id}</div>
@@ -495,6 +668,7 @@ function renderVacantes() {
         <div style="font-family:var(--font-heading);font-size:15px;color:var(--color-accent-700)">${esc(t.v.salario || "")}</div>
       </div>
       <p class="muted" style="margin:0;font-size:13px">${esc(t.v.requisitos || "")}</p>
+      ${(!state.detalleVacErr && faltaDef(t.v.id)) ? `<div style="font-size:12.5px;color:#6d5210;background:#f6efdc;padding:5px 9px">Sin definir: ${faltaDef(t.v.id)}</div>` : ""}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--color-divider);border-bottom:1px solid var(--color-divider)">
         <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Evaluados</div><div style="font-family:var(--font-heading);font-size:24px">${t.total}</div></div>
         <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Avanzar</div><div style="font-family:var(--font-heading);font-size:24px;color:#2f6b46">${t.avanzar}</div></div>
@@ -502,6 +676,7 @@ function renderVacantes() {
         <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Score top</div><div style="font-family:var(--font-heading);font-size:24px">${t.mejor}</div></div>
       </div>
       <button class="btn btn-primary btn-pick" style="width:100%">Ver candidatos</button>
+      <button class="btn btn-secondary btn-info" style="width:100%">Ver información completa</button>
     </div>`).join("")}
   </div>`;
 }
@@ -510,6 +685,7 @@ function bindVacantes() {
     el.querySelector(".btn-pick").onclick = () => {
       state.vista = "lista"; state.vacante = el.dataset.vac; state.rec = "todas"; state.busqueda = ""; render();
     };
+    el.querySelector(".btn-info").onclick = () => { state.vista = "vacante"; state.vacanteSel = Number(el.dataset.vid); render(); };
   });
 }
 
@@ -518,11 +694,13 @@ function renderLista() {
   const totalPaginas = Math.max(1, Math.ceil(todasFilas.length / state.porPagina));
   if (state.pagina > totalPaginas) state.pagina = totalPaginas;
   const filas = paginaActual(todasFilas);
-  const listaVacantes = [...new Set(state.evaluaciones.map(c => c.vacante))];
-  const kpiTotal = state.evaluaciones.length;
-  const kpiAvanzar = state.evaluaciones.filter(c => c.rec === "avanzar").length;
-  const kpiRevisar = state.evaluaciones.filter(c => c.rec === "revisar").length;
-  const kpiAgendadas = state.evaluaciones.filter(c => c.estado.startsWith("Agendada")).length;
+  const listaVacantes = [...new Set([...state.vacantes.map(v => v.titulo), ...state.evaluaciones.map(c => c.vacante)])];
+  const activos = state.evaluaciones.filter(c => !c.descartado);
+  const kpiTotal = activos.length;
+  const kpiAvanzar = activos.filter(c => c.rec === "avanzar").length;
+  const kpiRevisar = activos.filter(c => c.rec === "revisar").length;
+  const kpiAgendadas = activos.filter(c => c.estado.startsWith("Agendada")).length;
+  const kpiPendientes = activos.filter(esPendiente).length;
 
   return `
   <button class="btn btn-ghost" id="btn-volver-vac" style="margin-bottom:12px;padding-left:0">← Vacantes</button>
@@ -538,7 +716,8 @@ function renderLista() {
     <div style="padding:16px 18px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:12px;text-transform:uppercase">Evaluados</div><div style="font-family:var(--font-heading);font-size:34px">${kpiTotal}</div></div>
     <div style="padding:16px 18px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:12px;text-transform:uppercase">Avanzar</div><div style="font-family:var(--font-heading);font-size:34px;color:#2f6b46">${kpiAvanzar}</div></div>
     <div style="padding:16px 18px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:12px;text-transform:uppercase">Revisar</div><div style="font-family:var(--font-heading);font-size:34px;color:#8a6a12">${kpiRevisar}</div></div>
-    <div style="padding:16px 18px"><div class="muted" style="font-size:12px;text-transform:uppercase">Agendadas</div><div style="font-family:var(--font-heading);font-size:34px;color:var(--color-accent-700)">${kpiAgendadas}</div></div>
+    <div style="padding:16px 18px;border-right:1px solid var(--color-divider)"><div class="muted" style="font-size:12px;text-transform:uppercase">Agendadas</div><div style="font-family:var(--font-heading);font-size:34px;color:var(--color-accent-700)">${kpiAgendadas}</div></div>
+    <div data-kpi="pendientes" style="padding:16px 18px;cursor:pointer" title="Ver solo las solicitudes pendientes"><div class="muted" style="font-size:12px;text-transform:uppercase">Sin revisar +${CONFIG.DIAS_RECORDATORIO || 5} días</div><div style="font-family:var(--font-heading);font-size:34px;color:${kpiPendientes ? "#a33a2e" : "var(--color-text)"}">${kpiPendientes}</div></div>
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;padding-bottom:14px;border-bottom:1px solid var(--color-divider);margin-bottom:14px">
     <div style="flex:1 1 230px"><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Buscar por nombre o folio</label>
@@ -559,6 +738,13 @@ function renderLista() {
         </select>
         ${state.fechaPreset === "rango" ? `<input class="input" id="in-desde" type="date" value="${state.desde}" style="width:auto" aria-label="Desde"><span class="muted">a</span><input class="input" id="in-hasta" type="date" value="${state.hasta}" style="width:auto" aria-label="Hasta">` : ""}
       </div></div>
+    <div><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Estado</label>
+      <select class="input" id="sel-estado" style="width:auto">
+        <option value="activos" ${state.estadoFiltro==="activos"?"selected":""}>Activos</option>
+        <option value="pendientes" ${state.estadoFiltro==="pendientes"?"selected":""}>Pendientes (+${CONFIG.DIAS_RECORDATORIO || 5} días)</option>
+        <option value="descartados" ${state.estadoFiltro==="descartados"?"selected":""}>Descartados</option>
+        <option value="todos" ${state.estadoFiltro==="todos"?"selected":""}>Todos</option>
+      </select></div>
     <div><label class="muted" style="font-size:12px;text-transform:uppercase;display:block;margin-bottom:5px">Recomendación</label>
       <div style="display:flex;border:1px solid var(--color-divider)">
         ${FILTROS.map(f => `<button class="seg-opt" data-rec="${f.key}" style="background:${state.rec===f.key?"var(--color-accent)":"transparent"};color:${state.rec===f.key?"#fff":"var(--color-text)"}">${f.label}</button>`).join("")}
@@ -578,9 +764,9 @@ function renderLista() {
     <thead><tr><th>Folio</th><th>Nombre</th><th>Vacante</th><th style="width:130px">Score</th><th>Recomendación</th><th>Evaluado</th><th>Entrevista</th></tr></thead>
     <tbody>
       ${filas.map(c => `
-      <tr class="cand-row" data-folio="${c.folio}">
+      <tr class="cand-row" data-folio="${c.folio}"${c.descartado ? ' style="opacity:.6"' : ""}>
         <td style="font-family:ui-monospace,monospace;font-size:12.5px" class="muted">EV-${c.folio}</td>
-        <td style="font-weight:500">${esc(c.nombre)}${c.sinCv ? ` <span class="muted" style="margin-left:6px;border:1px solid var(--color-divider);padding:1px 6px;font-size:11px;text-transform:uppercase">Sin CV</span>` : ""}${state.vistos && !state.vistos.has(c.folio) ? `<span class="tag-nuevo">Nuevo</span>` : ""}</td>
+        <td style="font-weight:500">${esc(c.nombre)}${c.sinCv ? ` <span class="muted" style="margin-left:6px;border:1px solid var(--color-divider);padding:1px 6px;font-size:11px;text-transform:uppercase">Sin CV</span>` : ""}${c.descartado ? ` <span class="muted" style="margin-left:6px;border:1px solid #a33a2e;color:#a33a2e;padding:1px 6px;font-size:11px;text-transform:uppercase">Descartado</span>` : ""}${esPendiente(c) ? ` <span style="margin-left:6px;border:1px solid #d9c488;background:#f6efdc;color:#6d5210;padding:1px 6px;font-size:11px;text-transform:uppercase">Pendiente · ${diasSinRevisar(c)} días</span>` : ""}${state.vistos && !state.vistos.has(c.folio) ? `<span class="tag-nuevo">Nuevo</span>` : ""}</td>
         <td>${esc(c.vacante)}</td>
         <td><div style="display:flex;align-items:center;gap:9px">
               <span style="font-family:var(--font-heading);font-size:19px;width:28px">${c.score}</span>
@@ -616,6 +802,8 @@ function bindLista() {
   document.getElementById("btn-orden").onclick = () => { state.ordenDesc = !state.ordenDesc; render(); };
   document.getElementById("btn-recientes").onclick = () => { state.ordenPor = "fecha"; state.ordenDesc = true; state.pagina = 1; render(); };
   document.getElementById("sel-fecha").onchange = e => { state.fechaPreset = e.target.value; state.pagina = 1; render(); };
+  document.getElementById("sel-estado").onchange = e => { state.estadoFiltro = e.target.value; state.pagina = 1; render(); };
+  document.querySelectorAll('[data-kpi="pendientes"]').forEach(el => el.onclick = () => { state.estadoFiltro = "pendientes"; state.pagina = 1; render(); });
   const dd = document.getElementById("in-desde"); if (dd) dd.onchange = e => { state.desde = e.target.value; state.pagina = 1; render(); };
   const hh = document.getElementById("in-hasta"); if (hh) hh.onchange = e => { state.hasta = e.target.value; state.pagina = 1; render(); };
   document.querySelectorAll("[data-rec]").forEach(el => el.onclick = () => { state.rec = el.dataset.rec; state.pagina = 1; render(); });
@@ -693,11 +881,63 @@ function renderDesglose(c) {
       ${aviso}`);
 }
 
+/* ===================== DESCARTAR Y RESTAURAR (solo cambia lo que ve la reclutadora; no se avisa al candidato) ===================== */
+async function cambiarDescarte(accion) {
+  if (!state.seleccion || state.descartando) return;
+  state.descartando = true; render();
+  try {
+    const { data, error } = await supa.rpc("panel_descartar", { p_folio: state.seleccion, p_accion: accion, p_clave: CONFIG.WEBHOOK_CLAVE });
+    if (error) {
+      if (error.code === "PGRST202") throw new Error("Falta crear la función en Supabase. Corre el SQL de descartar y reiniciar.");
+      throw new Error(error.message || "No se pudo conectar con la base de datos.");
+    }
+    if (!data || data.ok !== true) throw new Error((data && data.error) || "No se pudo completar la acción.");
+    const c = state.evaluaciones.find(x => x.folio === state.seleccion);
+    if (accion === "descartar") {
+      state.descartadosLocal[state.seleccion] = Date.now();
+      if (c) { c.descartado = true; c.descartadoEn = Date.now(); }
+      state.descartar = "resultado";
+    } else {
+      delete state.descartadosLocal[state.seleccion];
+      if (c) { c.descartado = false; c.descartadoEn = 0; }
+    }
+    actualizarCampana();
+  } catch (err) {
+    alert((accion === "descartar" ? "No se pudo descartar al candidato: " : "No se pudo restaurar al candidato: ") + err.message);
+  }
+  state.descartando = false;
+  render();
+  if (!state.descartar) cargarDatos({ silencioso: true });
+}
+function renderDescarteModal(c) {
+  const marco = (contenido) => `<div class="dialog-backdrop"><div class="blueprint" style="background:var(--color-bg);width:min(520px,100%);padding:24px 26px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>${contenido}</div></div>`;
+  if (state.descartar === "resultado") {
+    return marco(`<h2 style="font-size:28px">Candidato descartado</h2>
+      <p style="font-size:14px"><strong>${esc(c.nombre)}</strong> · ${esc(c.vacante)}</p>
+      <p style="font-size:14px">Ya no aparece en tu lista de candidatos activos. Para verlo de nuevo, usa el filtro <strong>Estado: Descartados</strong>.</p>
+      <button class="btn btn-primary" id="btn-cerrar-descarte" style="width:100%">Listo</button>`);
+  }
+  const agendada = c.estado.startsWith("Agendada")
+    ? `<p style="font-size:13.5px;padding:10px 12px;background:#f6efdc;color:#6d5210">Tiene una entrevista agendada (${esc(c.estado.replace("Agendada · ", ""))}). Descartarlo no cancela el evento: bórralo en Google Calendar.</p>` : "";
+  return marco(`<h2 style="font-size:28px">¿Descartar a ${esc(c.nombre)}?</h2>
+      <p class="muted" style="font-size:13.5px">${esc(c.vacante)}</p>
+      <p style="font-size:14px">Dejará de aparecer en tu lista de candidatos activos y en los contadores. <strong>No se le avisa al candidato.</strong></p>
+      <p class="muted" style="font-size:13px">Puedes verlo con el filtro «Estado: Descartados» y restaurarlo cuando quieras.</p>
+      ${agendada}
+      <div style="display:flex;gap:10px;margin-top:18px">
+        <button class="btn btn-secondary" id="btn-cancelar-descarte" style="flex:1" ${state.descartando ? "disabled" : ""}>Cancelar</button>
+        <button class="btn btn-primary" id="btn-confirmar-descarte" style="flex:2;background:#a33a2e;border-color:#a33a2e" ${state.descartando ? "disabled" : ""}>${state.descartando ? "Descartando…" : "Descartar candidato"}</button>
+      </div>`);
+}
+
 function renderDetalle() {
   const c = state.evaluaciones.find(x => x.folio === state.seleccion) || state.evaluaciones[0];
   if (!c) return `<p class="muted">No hay candidatos.</p>`;
   const modal = state.agenda ? renderAgendaModal(c) : "";
   const yaAgendada = c.estado.startsWith("Agendada");
+  const modalDescarte = state.descartar ? renderDescarteModal(c) : "";
+  const fechaDescarte = c.descartadoEn ? new Date(c.descartadoEn).toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" }) : "";
   return `
   <button class="btn btn-ghost" id="btn-volver-lista" style="margin-bottom:14px;padding-left:0">← Volver a la lista</button>
   <div style="display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:22px;align-items:start">
@@ -705,7 +945,7 @@ function renderDetalle() {
       <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--color-divider)">
         <div><div class="muted" style="font-family:ui-monospace,monospace;font-size:12.5px">Folio EV-${c.folio}</div>
           <h1 style="font-size:40px">${esc(c.nombre)}</h1>
-          <div class="muted" style="font-size:14px">${esc(c.vacante)} · ${esc(c.telefono)}${c.sinCv ? ` <span style="margin-left:8px;border:1px solid var(--color-divider);padding:1px 7px;font-size:11.5px;text-transform:uppercase">Sin CV</span>` : ""}</div></div>
+          <div class="muted" style="font-size:14px">${esc(c.vacante)} · ${esc(c.telefono)}${c.sinCv ? ` <span style="margin-left:8px;border:1px solid var(--color-divider);padding:1px 7px;font-size:11.5px;text-transform:uppercase">Sin CV</span>` : ""}${c.descartado ? ` <span style="margin-left:8px;border:1px solid #a33a2e;color:#a33a2e;padding:1px 7px;font-size:11.5px;text-transform:uppercase">Descartado</span>` : ""}</div></div>
         <span style="display:inline-flex;align-items:center;gap:8px;font-family:var(--font-heading);font-size:15px;padding:6px 12px;background:${REC[c.rec].bg};color:${REC[c.rec].ink}">
           <i style="width:8px;height:8px;background:${REC[c.rec].color}"></i>${REC[c.rec].texto}</span>
       </div>
@@ -740,13 +980,14 @@ function renderDetalle() {
       </div>
       <div class="blueprint" style="padding:18px;background:var(--color-accent-100)">
         <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-        <h3 style="font-size:14px;text-transform:uppercase">Siguiente paso</h3>
-        ${yaAgendada
+        <h3 style="font-size:14px;text-transform:uppercase">${c.descartado ? "Estado" : "Siguiente paso"}</h3>
+        ${c.descartado ? `<p style="font-size:13.5px;color:var(--color-accent-900);margin:0 0 10px"><strong>Candidato descartado el ${esc(fechaDescarte)}.</strong> Ya no aparece en tu lista de activos. No se le avisó al candidato.</p><button class="btn btn-secondary" id="btn-restaurar" style="width:100%" ${state.descartando ? "disabled" : ""}>Restaurar candidato</button>` : (yaAgendada
           ? `<p style="font-size:13.5px;color:var(--color-accent-900);margin:0 0 6px"><strong>${esc(c.estado)}</strong></p>
              <p style="font-size:13px;color:var(--color-accent-900)">Para cambiar la fecha, mueve el evento <code>Entrevista - Folio: ${c.folio}</code> directamente en Google Calendar: el candidato recibe el aviso actualizado por WhatsApp.</p>
              <button class="btn btn-primary" id="btn-agendar" style="width:100%" disabled>Ya está agendada</button>`
           : `<p style="font-size:13.5px;color:var(--color-accent-900)">Al confirmar se crea el evento <code>Entrevista - Folio: ${c.folio}</code> en Calendar y el candidato recibe el aviso por WhatsApp al momento.</p>
-             <button class="btn btn-primary" id="btn-agendar" style="width:100%">Agendar entrevista</button>`}
+             <button class="btn btn-primary" id="btn-agendar" style="width:100%">Agendar entrevista</button>`)}
+        ${c.descartado ? "" : `<button class="btn btn-secondary" id="btn-descartar" style="width:100%;margin-top:10px;color:#a33a2e;border-color:#a33a2e">Descartar candidato</button>`}
       </div>
       <div style="border:1px solid var(--color-divider);padding:16px 18px">
         <h3 style="font-size:14px;text-transform:uppercase">Trazabilidad</h3>
@@ -758,7 +999,7 @@ function renderDetalle() {
       </div>
     </div>
   </div>
-  ${modal}`;
+  ${modal}${modalDescarte}`;
 }
 function renderAgendaModal(c) {
   if (state.agenda === "confirmada") {
@@ -800,6 +1041,16 @@ function bindDetalle() {
   if (cvBtn && !cvBtn.disabled) cvBtn.onclick = () => verCV(state.seleccion);
   const agBtn = document.getElementById("btn-agendar");
   if (agBtn) agBtn.onclick = () => { state.agenda = "abierta"; state.hora = ""; render(); };
+  const desBtn = document.getElementById("btn-descartar");
+  if (desBtn) desBtn.onclick = () => { state.descartar = "confirmar"; render(); };
+  const cancelarDes = document.getElementById("btn-cancelar-descarte");
+  if (cancelarDes) cancelarDes.onclick = () => { state.descartar = null; render(); };
+  const confirmarDes = document.getElementById("btn-confirmar-descarte");
+  if (confirmarDes) confirmarDes.onclick = () => cambiarDescarte("descartar");
+  const cerrarDes = document.getElementById("btn-cerrar-descarte");
+  if (cerrarDes) cerrarDes.onclick = () => { state.descartar = null; render(); cargarDatos({ silencioso: true }); };
+  const restBtn = document.getElementById("btn-restaurar");
+  if (restBtn) restBtn.onclick = () => cambiarDescarte("restaurar");
   const cerrar = document.getElementById("btn-cerrar-agenda");
   if (cerrar) cerrar.onclick = () => { const confirmada = state.agenda === "confirmada"; state.agenda = null; render(); if (confirmada) cargarDatos({ silencioso: true }); };
   const cancelar = document.getElementById("btn-cancelar-agenda");
