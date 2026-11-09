@@ -6,7 +6,7 @@
 <title>DRFC · Panel de Candidatos</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500&family=Barlow+Condensed:wght@600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* ===================== CONFIGURACIÓN ===================== */
@@ -19,7 +19,10 @@ const CONFIG = {
   // Contraseña simple de acceso al panel. Cámbiala antes de compartir el link.
   // true = pide la contraseña al abrir el panel; false = abre directo, sin login.
   // Cada cuántos segundos revisa si llegaron candidatos nuevos (mientras el panel está abierto).
+  // Cada cuántos segundos pregunta (con una consulta mínima) si llegó alguien nuevo.
   ACTUALIZAR_CADA_SEGUNDOS: 30,
+  // La descarga completa se repite solo si llegó alguien nuevo, o cada tantos minutos mientras el panel está visible.
+  REFRESCO_COMPLETO_MINUTOS: 10,
   // Días sin decisión (agendar o descartar) para que el panel recuerde que una solicitud sigue pendiente.
   DIAS_RECORDATORIO: 5,
   // Hoja de Google donde se administran título, requisitos, sueldo, imagen y estado de las vacantes.
@@ -91,6 +94,115 @@ h1, h2, h3 { font-family: var(--font-heading); font-weight: 600; line-height: 1.
 .aviso-item { display: block; width: 100%; text-align: left; padding: 11px 14px; background: transparent; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent); cursor: pointer; font: inherit; color: inherit; }
 .aviso-item:hover { background: var(--color-accent-100); }
 .toast { position: fixed; right: 22px; bottom: 22px; max-width: 340px; background: var(--color-accent-900); color: #fff; padding: 12px 16px; font-size: 14px; z-index: 40; box-shadow: 0 8px 24px rgba(0,0,0,.2); cursor: pointer; }
+/* ===================== BARRA SUPERIOR ===================== */
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 28px; position: sticky; top: 0; z-index: 5;
+  background: rgba(255,255,255,.94); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(16,42,110,.08); box-shadow: 0 4px 20px rgba(16,42,110,.06); }
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, #1e3a8a, #2563eb 55%, #22d3ee); box-shadow: 0 4px 12px rgba(37,99,235,.35); }
+.brand-name { font-family: "Poppins", var(--font-heading); font-weight: 700; font-size: 19px; letter-spacing: .01em; }
+.brand-pill { font-family: "Poppins", var(--font-body); font-weight: 500; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  color: #1d4ed8; background: #e8efff; padding: 5px 13px; border-radius: 999px; }
+.campana { border-radius: 12px; border-color: rgba(16,42,110,.14); }
+.panel-aviso { border-radius: 14px; overflow: hidden; background: #fff; box-shadow: 0 14px 40px rgba(16,42,110,.18); }
+
+/* ===================== HOME · VACANTES ===================== */
+body.is-home {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(34,211,238,.55), transparent 38%),
+    radial-gradient(circle at 0% 100%, rgba(34,211,238,.35), transparent 34%),
+    linear-gradient(160deg, #142f78 0%, #1d4ed8 55%, #2563eb 100%);
+  min-height: 100vh;
+}
+body.is-home #view-root { margin: 0 auto; }
+.home { font-family: "Poppins", var(--font-body); color: #0f1f4b; background: #f4f7fd; border-radius: 28px; overflow: hidden;
+  box-shadow: 0 30px 80px rgba(8,24,74,.35); }
+.home h1, .home h2, .home h3 { font-family: "Poppins", var(--font-heading); letter-spacing: -.02em; }
+.home .muted { color: #64748b; }
+
+.home-hero { position: relative; display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); gap: 24px; align-items: center;
+  padding: 52px 56px 120px; color: #fff; overflow: hidden;
+  background:
+    radial-gradient(circle at 76% 42%, rgba(56,189,248,.38), transparent 44%),
+    linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 58%, #2563eb 100%); }
+.home-wave { position: absolute; left: 0; bottom: -1px; width: 100%; height: 100px; display: block; }
+.hero-text { position: relative; z-index: 1; }
+.hero-eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase;
+  padding: 6px 14px; border-radius: 999px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.22); }
+.hero-eyebrow i { width: 7px; height: 7px; border-radius: 50%; background: #67e8f9; box-shadow: 0 0 10px #67e8f9; }
+.hero-title { font-size: clamp(36px, 4.6vw, 56px); font-weight: 700; line-height: 1.05; margin: 18px 0 12px; color: #fff; }
+.hero-sub { font-size: 16px; line-height: 1.6; max-width: 44ch; margin: 0; color: rgba(255,255,255,.82); }
+.hero-feats { display: flex; flex-wrap: wrap; gap: 14px 26px; margin-top: 32px; }
+.hero-feat { display: flex; align-items: center; gap: 10px; }
+.hero-feat .ic { flex: none; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.2); color: #a5f3fc; }
+.hero-feat strong { display: block; font-size: 20px; font-weight: 600; line-height: 1.1; }
+.hero-feat span { display: block; font-size: 12.5px; color: rgba(255,255,255,.75); line-height: 1.3; }
+.hero-feat.alerta .ic { color: #fecaca; background: rgba(239,68,68,.22); border-color: rgba(254,202,202,.35); }
+
+.hero-art { position: relative; height: 340px; display: grid; place-items: center; z-index: 1; }
+.ring { position: relative; width: 236px; height: 236px; border-radius: 50%; display: grid; place-items: center; text-align: center;
+  background: radial-gradient(circle at 50% 35%, #7c9cff 0%, #4f46e5 50%, #312e81 100%);
+  box-shadow: 0 0 0 12px rgba(255,255,255,.07), 0 20px 50px rgba(8,24,74,.45); }
+.ring::before { content: ""; position: absolute; inset: -16px; border-radius: 50%; border: 3px solid #67e8f9;
+  box-shadow: 0 0 24px #22d3ee, 0 0 60px rgba(34,211,238,.45), inset 0 0 24px rgba(34,211,238,.4); }
+.ring::after { content: ""; position: absolute; inset: -40px; border-radius: 50%; border: 1px dashed rgba(165,243,252,.35); }
+.ring-num { font-size: 68px; font-weight: 700; line-height: 1; color: #fff; }
+.ring-label { font-size: 13px; color: rgba(255,255,255,.82); margin-top: 6px; max-width: 13ch; line-height: 1.3; }
+.orb { position: absolute; border-radius: 50%; display: grid; place-items: center; color: #1d4ed8;
+  background: linear-gradient(145deg, #ffffff, #dbeafe); box-shadow: 0 10px 24px rgba(8,24,74,.35);
+  animation: flotar 6s ease-in-out infinite; }
+.orb.azul { color: #fff; background: linear-gradient(145deg, #60a5fa, #4338ca); }
+.orb.cian { color: #fff; background: linear-gradient(145deg, #67e8f9, #0ea5e9); }
+.orb.punto { width: 12px; height: 12px; background: #a5f3fc; box-shadow: 0 0 12px #67e8f9; }
+@keyframes flotar { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@media (prefers-reduced-motion: reduce) { .orb { animation: none; } .vac-card { transition: none; } }
+
+.home-body { padding: 4px 56px 52px; }
+.section-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+.section-head h2 { font-size: 26px; font-weight: 600; margin: 0 0 4px; color: #0f1f4b; }
+.section-head p { margin: 0; font-size: 14px; }
+.vac-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 24px; }
+.vac-card { display: flex; flex-direction: column; background: #fff; border-radius: 22px; overflow: hidden;
+  border: 1px solid rgba(15,40,110,.06); box-shadow: 0 10px 30px rgba(15,40,110,.08); transition: transform .2s ease, box-shadow .2s ease; }
+.vac-card:hover { transform: translateY(-4px); box-shadow: 0 18px 40px rgba(15,40,110,.16); }
+.vac-media { position: relative; height: 168px; background: linear-gradient(135deg, #1e3a8a, #2563eb 60%, #38bdf8); display: grid; place-items: center; color: rgba(255,255,255,.9); }
+.vac-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vac-media .blob { position: absolute; right: -30px; top: -30px; width: 130px; height: 130px; border-radius: 50%; background: rgba(103,232,249,.35); }
+.vac-tag { position: absolute; top: 12px; left: 12px; font-family: ui-monospace, monospace; font-size: 11.5px; padding: 4px 10px; border-radius: 999px;
+  background: rgba(255,255,255,.94); color: #1d4ed8; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.vac-off { position: absolute; top: 12px; right: 12px; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em;
+  padding: 4px 10px; border-radius: 999px; background: #0f1f4b; color: #fff; }
+.vac-body { display: flex; flex-direction: column; gap: 12px; padding: 20px 22px 22px; flex: 1; }
+.vac-body h3 { font-size: 19px; font-weight: 600; line-height: 1.25; margin: 0; color: #0f1f4b; }
+.vac-salary { font-size: 14px; font-weight: 600; color: #2563eb; margin-top: 4px; }
+.vac-req { margin: 0; font-size: 13px; line-height: 1.55; color: #64748b; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.vac-warn { font-size: 12.5px; color: #6d5210; background: #fdf3d8; padding: 6px 11px; border-radius: 10px; }
+.vac-stats { display: grid; grid-template-columns: repeat(4, 1fr); background: #f1f5ff; border-radius: 14px; padding: 10px 4px; }
+.vac-stats > div { text-align: center; }
+.vac-stats .lbl { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
+.vac-stats .val { font-size: 22px; font-weight: 600; line-height: 1.2; }
+.vac-actions { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.home .btn { border-radius: 999px; font-family: "Poppins", var(--font-body); font-weight: 500; font-size: 14px; padding: 10px 16px; }
+.home .btn-primary { background: linear-gradient(90deg, #1d4ed8, #2563eb); border-color: transparent; box-shadow: 0 6px 16px rgba(37,99,235,.3); }
+.home .btn-primary:hover:not(:disabled) { background: linear-gradient(90deg, #1e40af, #1d4ed8); }
+.home .btn-secondary { background: #fff; border-color: #c7d6f5; color: #1d4ed8; }
+.home .btn-secondary:hover { background: #eef3ff; }
+.vac-vacio { text-align: center; padding: 40px 20px; background: #fff; border-radius: 22px; color: #64748b; }
+
+@media (max-width: 900px) {
+  .home-hero { grid-template-columns: 1fr; padding: 40px 28px 110px; }
+  .hero-art { height: 300px; }
+  .home-body { padding: 4px 28px 36px; }
+}
+@media (max-width: 560px) {
+  .home { border-radius: 20px; }
+  .hero-art { transform: scale(.85); }
+  .topbar { padding: 10px 16px; }
+  .brand-pill { display: none; }
+}
+
 .tag-nuevo { margin-left: 6px; padding: 1px 6px; font-family: var(--font-heading); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; background: var(--color-accent); color: #fff; }
 </style>
 </head>
@@ -110,10 +222,11 @@ h1, h2, h3 { font-family: var(--font-heading); font-weight: 600; line-height: 1.
 
 <!-- ===================== APP ===================== -->
 <div id="app">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 28px;border-bottom:1px solid var(--color-divider);position:sticky;top:0;background:var(--color-bg);z-index:5">
-    <div style="display:flex;align-items:baseline;gap:14px">
-      <span style="font-family:var(--font-heading);font-weight:700;font-size:20px">DRFC</span>
-      <span style="font-family:var(--font-heading);font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-700)">Reclutamiento IA</span>
+  <div class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg></span>
+      <span class="brand-name">DRFC</span>
+      <span class="brand-pill">Reclutamiento IA</span>
     </div>
     <div style="display:flex;align-items:center;gap:18px">
       <div id="header-status" class="muted" style="font-size:12.5px">Cargando…</div>
@@ -146,6 +259,9 @@ const state = {
   desde: "",
   hasta: "",
   vistos: null,
+  maxIdConocido: null,
+  ultimoRefrescoCompleto: 0,
+  cvCache: {},
   vacanteSel: null,
   vacantesDetalle: {},
   detalleVacErr: null,
@@ -306,7 +422,27 @@ function procesarNuevos() {
 }
 function iniciarActualizacionAutomatica() {
   if (state.timer) return;
-  state.timer = setInterval(() => cargarDatos({ silencioso: true }), (CONFIG.ACTUALIZAR_CADA_SEGUNDOS || 30) * 1000);
+  state.timer = setInterval(revisarCambios, (CONFIG.ACTUALIZAR_CADA_SEGUNDOS || 30) * 1000);
+}
+// Revisión ligera: pregunta solo por el folio más reciente (unos pocos bytes). Descarga todo únicamente si llegó
+// alguien nuevo, o cada REFRESCO_COMPLETO_MINUTOS mientras el panel está visible.
+async function revisarCambios() {
+  if (state.refrescando) return;
+  try {
+    const { data, error } = await supa.from("evaluaciones").select("id").order("id", { ascending: false }).limit(1);
+    if (error) return;
+    const maxId = data && data.length ? data[0].id : 0;
+    const pasoElTiempo = Date.now() - state.ultimoRefrescoCompleto > (CONFIG.REFRESCO_COMPLETO_MINUTOS || 10) * 60000;
+    if (maxId !== state.maxIdConocido || (pasoElTiempo && document.visibilityState === "visible")) await cargarDatos({ silencioso: true });
+  } catch (e) { /* una falla de red no tira el panel */ }
+}
+// Columnas de las evaluaciones SIN el CV (cv_base64 pesa cientos de KB por candidato y solo se baja al pedir "Ver CV")
+const COLS_EVAL_BASE = "id, telefono, vacante_id, cv_url, score, resumen, fortalezas, riesgos, recomendacion, creado_en, nombre";
+async function leerEvaluaciones() {
+  const consulta = (cols) => supa.from("evaluaciones").select(cols).order("creado_en", { ascending: false }).limit(1000);
+  let r = await consulta(COLS_EVAL_BASE + ", desglose, descartado_en");
+  if (r.error && r.error.code === "42703") r = await consulta(COLS_EVAL_BASE);   // si falta alguna columna nueva, usa las básicas
+  return r;
 }
 
 async function cargarDatos(opciones = {}) {
@@ -318,7 +454,7 @@ async function cargarDatos(opciones = {}) {
     const [{ data: vacantesData, error: e1 }, { data: evalData, error: e2 },
            { data: convData, error: e3 }, { data: entData, error: e4 }] = await Promise.all([
       supa.from("vacantes").select("*").order("id"),
-      supa.from("evaluaciones").select("*").order("creado_en", { ascending: false }),
+      leerEvaluaciones(),
       supa.from("conversaciones").select("telefono, edad, tiene_rfc"),
       supa.from("entrevistas_notificadas").select("folio, fecha_hora_notificada, notificado_en").order("notificado_en", { ascending: false })
     ]);
@@ -355,7 +491,7 @@ async function cargarDatos(opciones = {}) {
         estado,
         edad: conv.edad ?? "—",
         rfc: conv.tiene_rfc === true ? "Sí" : conv.tiene_rfc === false ? "No" : "—",
-        cvBase64: e.cv_base64 || null,
+        tieneCv: !!e.cv_url && e.cv_url !== "sin_cv",
         sinCv: e.cv_url === "sin_cv",
         descartado: !!e.descartado_en || !!state.descartadosLocal[e.id],
         descartadoEn: leerFecha(e.descartado_en) ? leerFecha(e.descartado_en).getTime() : (state.descartadosLocal[e.id] || 0),
@@ -383,6 +519,8 @@ async function cargarDatos(opciones = {}) {
   state.refrescando = false;
   state.loading = false;
   state.ultimaActualizacion = new Date();
+  state.ultimoRefrescoCompleto = Date.now();
+  state.maxIdConocido = state.evaluaciones.reduce((m, c) => Math.max(m, c.folio), 0);
   if (!silencioso) { render(); return; }
   // Refresco automático: solo se redibuja si no se está escribiendo ni hay un cuadro abierto
   const a = document.activeElement;
@@ -393,14 +531,28 @@ async function cargarDatos(opciones = {}) {
 /* ===================== ACCIONES ===================== */
 function abrir(folio) { marcarVisto(folio); state.vista = "detalle"; state.seleccion = folio; render(); }
 
-function verCV(folio) {
+async function verCV(folio) {
   const c = state.evaluaciones.find(x => x.folio === folio);
-  if (!c || !c.cvBase64) { alert("Este candidato no tiene un CV almacenado."); return; }
-  const byteChars = atob(c.cvBase64);
-  const bytes = new Uint8Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
-  const blob = new Blob([bytes], { type: "application/pdf" });
-  window.open(URL.createObjectURL(blob), "_blank");
+  if (!c || !c.tieneCv) { alert("Este candidato no tiene un CV almacenado."); return; }
+  const ventana = window.open("", "_blank");            // se abre ya, para que el navegador no la bloquee
+  const cerrarVentana = () => { if (ventana) ventana.close(); };
+  let b64 = state.cvCache[folio];
+  if (!b64) {
+    const { data, error } = await supa.from("evaluaciones").select("cv_base64").eq("id", folio).limit(1);
+    if (error) { cerrarVentana(); alert("No se pudo descargar el CV: " + (error.message || "error de conexión")); return; }
+    b64 = data && data[0] ? data[0].cv_base64 : null;
+    if (!b64) { cerrarVentana(); alert("Este candidato no tiene un CV almacenado."); return; }
+    state.cvCache[folio] = b64;
+  }
+  let url;
+  try {
+    const byteChars = atob(b64);
+    const bytes = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+    url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  } catch (e) { cerrarVentana(); alert("El CV guardado está dañado y no se puede abrir."); return; }
+  if (ventana) ventana.location.href = url;
+  else { const a = document.createElement("a"); a.href = url; a.download = "CV-" + folio + ".pdf"; a.click(); }
 }
 
 function hoyLocal() {
@@ -509,6 +661,7 @@ function render() {
   actualizarEncabezado();
 
   const root = document.getElementById("view-root");
+  document.body.classList.toggle("is-home", !state.loading && !state.error && state.vista === "vacantes");
   if (state.loading) { root.innerHTML = `<p class="muted">Cargando datos de Supabase…</p>`; return; }
   if (state.error) { root.innerHTML = `<p style="color:#a33a2e">No se pudieron cargar los datos: ${esc(state.error)}</p>`; return; }
 
@@ -653,33 +806,98 @@ function renderVacantes() {
       agendadas: grupo.filter(c => c.estado.startsWith("Agendada")).length,
       mejor: grupo.length ? Math.max(...grupo.map(c => c.score)) : 0 };
   });
+  // Resumen general (solo lectura, se calcula con los mismos datos ya cargados)
+  const activos = state.evaluaciones.filter(c => !c.descartado);
+  const resumen = {
+    vacantes: state.vacantes.filter(v => v.activa !== false).length,
+    activos: activos.length,
+    avanzar: activos.filter(c => c.rec === "avanzar").length,
+    agendadas: activos.filter(c => c.estado.startsWith("Agendada")).length,
+    pendientes: activos.filter(esPendiente).length
+  };
+  const feat = (icono, num, texto, extra) => `<div class="hero-feat${extra ? " " + extra : ""}"><span class="ic">${ICONO[icono]}</span><div><strong>${num}</strong><span>${texto}</span></div></div>`;
+  const orb = (icono, tam, top, left, tono, retraso) => `<span class="orb ${tono}" style="width:${tam}px;height:${tam}px;top:${top};left:${left};animation-delay:${retraso}s" aria-hidden="true">${ICONO[icono]}</span>`;
+  const dias = CONFIG.DIAS_RECORDATORIO || 5;
+
   return `
-  <div style="margin-bottom:24px">
-    <h1 style="font-size:38px">Vacantes</h1>
-    <p class="muted" style="font-size:13.5px;margin:0">Elige una vacante para revisar sus candidatos evaluados por IA.</p>
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px">
-    ${tarjetas.map(t => `
-    <div class="blueprint" data-vac="${esc(t.v.titulo)}" data-vid="${t.v.id}" style="padding:20px 22px;display:flex;flex-direction:column;gap:14px">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
-      <div>
-        <div style="font-family:ui-monospace,monospace;font-size:11.5px" class="muted">VAC-${t.v.id}</div>
-        <h2 style="font-size:26px">${esc(t.v.titulo)}${t.v.activa === false ? ' <span class="muted" style="font-size:13px">(inactiva)</span>' : ''}</h2>
-        <div style="font-family:var(--font-heading);font-size:15px;color:var(--color-accent-700)">${esc(t.v.salario || "")}</div>
+  <div class="home">
+    <section class="home-hero">
+      <div class="hero-text">
+        <span class="hero-eyebrow"><i></i>DRFC · Reclutamiento IA</span>
+        <h1 class="hero-title">Vacantes</h1>
+        <p class="hero-sub">Elige una vacante para revisar sus candidatos evaluados por IA.</p>
+        <div class="hero-feats">
+          ${feat("maletin", resumen.vacantes, resumen.vacantes === 1 ? "Vacante activa" : "Vacantes activas")}
+          ${feat("check", resumen.avanzar, "Para avanzar")}
+          ${feat("calendario", resumen.agendadas, resumen.agendadas === 1 ? "Entrevista agendada" : "Entrevistas agendadas")}
+          ${feat("reloj", resumen.pendientes, `Sin revisar +${dias} días`, resumen.pendientes ? "alerta" : "")}
+        </div>
       </div>
-      <p class="muted" style="margin:0;font-size:13px">${esc(t.v.requisitos || "")}</p>
-      ${(!state.detalleVacErr && faltaDef(t.v.id)) ? `<div style="font-size:12.5px;color:#6d5210;background:#f6efdc;padding:5px 9px">Sin definir: ${faltaDef(t.v.id)}</div>` : ""}
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--color-divider);border-bottom:1px solid var(--color-divider)">
-        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Evaluados</div><div style="font-family:var(--font-heading);font-size:24px">${t.total}</div></div>
-        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Avanzar</div><div style="font-family:var(--font-heading);font-size:24px;color:#2f6b46">${t.avanzar}</div></div>
-        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Agendadas</div><div style="font-family:var(--font-heading);font-size:24px;color:var(--color-accent-700)">${t.agendadas}</div></div>
-        <div style="padding:10px 0"><div class="muted" style="font-size:10px;text-transform:uppercase">Score top</div><div style="font-family:var(--font-heading);font-size:24px">${t.mejor}</div></div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="ring"><div><div class="ring-num">${resumen.activos}</div><div class="ring-label">${resumen.activos === 1 ? "candidato activo" : "candidatos activos"}</div></div></div>
+        ${orb("chat", 62, "6%", "14%", "cian", 0)}
+        ${orb("doc", 50, "2%", "66%", "", 1.2)}
+        ${orb("grafica", 66, "22%", "84%", "azul", .6)}
+        ${orb("calendario", 54, "70%", "80%", "", 2)}
+        ${orb("check", 58, "74%", "8%", "azul", 1.6)}
+        ${orb("usuario", 44, "42%", "-2%", "", 2.6)}
+        ${orb("", 12, "18%", "40%", "punto", .4)}
+        ${orb("", 10, "88%", "52%", "punto", 1.8)}
+        ${orb("", 8, "56%", "94%", "punto", 3)}
       </div>
-      <button class="btn btn-primary btn-pick" style="width:100%">Ver candidatos</button>
-      <button class="btn btn-secondary btn-info" style="width:100%">Ver información completa</button>
-    </div>`).join("")}
+      <svg class="home-wave" viewBox="0 0 1440 100" preserveAspectRatio="none" aria-hidden="true"><path d="M0 60 C 240 110, 480 0, 760 40 S 1240 90, 1440 30 L1440 100 L0 100 Z" fill="#f4f7fd"/></svg>
+    </section>
+
+    <div class="home-body">
+      <div class="section-head">
+        <div><h2>Vacantes disponibles</h2><p class="muted">${state.vacantes.length} ${state.vacantes.length === 1 ? "vacante" : "vacantes"} · ${resumen.activos} ${resumen.activos === 1 ? "candidato evaluado" : "candidatos evaluados"}</p></div>
+      </div>
+      ${tarjetas.length ? "" : `<div class="vac-vacio">Todavía no hay vacantes registradas.</div>`}
+      <div class="vac-grid">
+        ${tarjetas.map(t => `
+        <div class="vac-card" data-vac="${esc(t.v.titulo)}" data-vid="${t.v.id}">
+          <div class="vac-media">
+            ${t.v.imagen_url ? `<img src="${esc(t.v.imagen_url)}" alt="" loading="lazy" onerror="this.remove()">` : `<span class="blob"></span>${ICONO.maletinGrande}`}
+            <span class="vac-tag">VAC-${t.v.id}</span>
+            ${t.v.activa === false ? `<span class="vac-off">Inactiva</span>` : ""}
+          </div>
+          <div class="vac-body">
+            <div>
+              <h3>${esc(t.v.titulo)}</h3>
+              ${t.v.salario ? `<div class="vac-salary">${esc(t.v.salario)}</div>` : ""}
+            </div>
+            ${t.v.requisitos ? `<p class="vac-req" title="${esc(t.v.requisitos)}">${esc(t.v.requisitos)}</p>` : ""}
+            ${(!state.detalleVacErr && faltaDef(t.v.id)) ? `<div class="vac-warn">Sin definir: ${faltaDef(t.v.id)}</div>` : ""}
+            <div class="vac-stats">
+              <div><div class="lbl">Evaluados</div><div class="val">${t.total}</div></div>
+              <div><div class="lbl">Avanzar</div><div class="val" style="color:#16a34a">${t.avanzar}</div></div>
+              <div><div class="lbl">Agendadas</div><div class="val" style="color:#2563eb">${t.agendadas}</div></div>
+              <div><div class="lbl">Score top</div><div class="val">${t.mejor}</div></div>
+            </div>
+            <div class="vac-actions">
+              <button class="btn btn-primary btn-pick" style="width:100%">Ver candidatos</button>
+              <button class="btn btn-secondary btn-info" style="width:100%">Ver información completa</button>
+            </div>
+          </div>
+        </div>`).join("")}
+      </div>
+    </div>
   </div>`;
 }
+/* Íconos del home (solo decorativos) */
+const svgIco = (d, t = 20) => `<svg width="${t}" height="${t}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const ICONO = {
+  "": "",
+  maletin: svgIco('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>'),
+  maletinGrande: svgIco('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/>', 54),
+  check: svgIco('<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>'),
+  calendario: svgIco('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>'),
+  reloj: svgIco('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  chat: svgIco('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11h.01M12 11h.01M15.5 11h.01"/>', 26),
+  doc: svgIco('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>', 22),
+  grafica: svgIco('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>', 28),
+  usuario: svgIco('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', 20)
+};
 function bindVacantes() {
   document.querySelectorAll("[data-vac]").forEach(el => {
     el.querySelector(".btn-pick").onclick = () => {
@@ -975,8 +1193,8 @@ function renderDetalle() {
       <div class="blueprint" style="padding:18px">
         <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
         <h3 style="font-size:14px;text-transform:uppercase">Curriculum</h3>
-        <div class="muted" style="margin-bottom:14px;font-size:12.5px">${c.sinCv ? "Sin CV: información declarada por el candidato en el chat. Confirmar en la entrevista." : (c.cvBase64 ? "CV almacenado" : "Sin CV almacenado")}</div>
-        <button class="btn btn-secondary" id="btn-ver-cv" style="width:100%" ${c.cvBase64 ? "" : "disabled"}>Ver CV original</button>
+        <div class="muted" style="margin-bottom:14px;font-size:12.5px">${c.sinCv ? "Sin CV: información declarada por el candidato en el chat. Confirmar en la entrevista." : (c.tieneCv ? "CV almacenado" : "Sin CV almacenado")}</div>
+        <button class="btn btn-secondary" id="btn-ver-cv" style="width:100%" ${c.tieneCv ? "" : "disabled"}>Ver CV original</button>
       </div>
       <div class="blueprint" style="padding:18px;background:var(--color-accent-100)">
         <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
